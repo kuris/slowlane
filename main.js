@@ -772,7 +772,7 @@ function buildConiferGeo(variant) {
       }
     }
   }
-  snowLobe(parts, 0, 6.18, 0, 0.23, 0.48, 0.24, season === 'winter' ? [0.80, 0.87, 0.94] : SEASONS[season].pine);
+  snowLobe(parts, 0, 5.75, 0, 0.23, 0.48, 0.24, season === 'winter' ? [0.80, 0.87, 0.94] : SEASONS[season].pine); // 마지막 가지층(약 y=5.3)과 맞닿게 내려 공중에 뜬 것처럼 보이지 않게 한다
   return mergePlantParts(parts);
 }
 function buildSnowRockGeo() {
@@ -787,7 +787,7 @@ function buildPalmGeo() {
   const point = t => new THREE.Vector3(0.65*t*t, 6.8*t, 0.18*Math.sin(t*2));
   for (let k=0;k<9;k++) branchPart(parts,point(k/9),point((k+1)/9),0.21-k*0.012,0.20-k*0.012,bark);
   const crown=point(1);
-  if (season === 'winter') return mergePlantParts(parts);
+  const snowy = season === 'winter'; // 겨울엔 잎을 아예 지우지 않고 눈 덮인 색으로만 바꾼다(민둥 기둥 방지)
   for(let leaf=0;leaf<9;leaf++) {
     const az=leaf*Math.PI*2/9, positions=[], indices=[];
     for(let k=0;k<=8;k++) {
@@ -801,7 +801,8 @@ function buildPalmGeo() {
     // 양면을 지오메트리로 만들어 기존 나무 재질·계절 페이드와 동일하게 처리한다.
     geo.setIndex(indices);geo.computeVertexNormals();
     geo.setIndex([...indices,...indices.slice().reverse()]);
-    colorize(geo,0.09+leaf%3*0.025,0.31+leaf%3*0.035,0.13);parts.push(geo);
+    const tint = snowy ? [0.82,0.88,0.93] : [0.09+leaf%3*0.025,0.31+leaf%3*0.035,0.13];
+    colorize(geo,...tint);parts.push(geo);
   }
   return mergePlantParts(parts);
 }
@@ -849,15 +850,17 @@ function buildFacadeTextures(style) {
   emissiveMap.colorSpace = THREE.SRGBColorSpace;
   return { map, emissiveMap };
 }
-const buildingMats = [0, 1, 2, 3].map(style => {
+// 스타일당 외벽 텍스처를 여러 장 따로 구워서, 같은 스타일 건물끼리도 창문 배치가 반복돼 보이지 않게 한다.
+const BUILDING_FACADE_VARIANTS = 3;
+const buildingMats = [0, 1, 2, 3].map(style => Array.from({ length: BUILDING_FACADE_VARIANTS }, () => {
   const tex = buildFacadeTextures(style);
   return new THREE.MeshStandardMaterial({
     vertexColors: true, map: tex.map, emissiveMap: tex.emissiveMap,
     emissive: 0xffffff, emissiveIntensity: 0,
     roughness: style === 1 ? 0.42 : 0.82, metalness: style === 1 ? 0.18 : 0.04, envMapIntensity: 0.2
   });
-});
-const spireMat = buildingMats[3].clone();
+}));
+const spireMat = buildingMats[3][0].clone();
 // 도시 건물: 단순 박스 벽 + 얇은 지붕 캡. 인스턴스 컬러가 전체에 곱해져 지붕은 벽보다 자동으로 어두워짐.
 function buildBoxBuildingGeo() {
   const wall = new THREE.BoxGeometry(1, 1, 1); wall.translate(0, 0.5, 0);
@@ -972,11 +975,11 @@ const plantPools = plantGeometries.map((geo, kind) => {
   return mesh;
 });
 const buildingCaps = [56, 40, 40];
-const buildingMeshes = buildingGeos.map((geo, ki) => buildingMats.map(mat => {
-  const mesh = makeInst(geo, mat, buildingCaps[ki]);
+const buildingMeshes = buildingGeos.map((geo, ki) => buildingMats.map(matsForStyle => matsForStyle.map(mat => {
+  const mesh = makeInst(geo, mat, Math.ceil(buildingCaps[ki] / BUILDING_FACADE_VARIANTS));
   mesh.count = 0; mesh.receiveShadow = true;
   return mesh;
-}));
+})));
 const spireMesh = makeInst(buildSpireBuildingGeo(), spireMat, 8);
 spireMesh.count = 0; spireMesh.receiveShadow = true;
 const bandMesh = makeInst(railBandGeo, railMat, RAIL_CAP);
@@ -1006,7 +1009,7 @@ function buildingTint(style, tint) {
 function rebuildPools() {
   let nT = 0, nB = 0, nP = 0, nR = 0, nPier = 0, nLamp = 0, nBeacon = 0, nBeaconG = 0, nSpire = 0;
   const plantCounts = plantPools.map(() => 0);
-  const buildingCounts = buildingMeshes.map(row => row.map(() => 0));
+  const buildingCounts = buildingMeshes.map(row => row.map(styleRow => styleRow.map(() => 0)));
   activeTrees.length = 0;
   // 풀이 가득 차도 차량 근처의 군집을 우선해 눈앞의 식생이 사라지지 않게 한다.
   const ordered = Array.from(segments.entries()).sort((a, b) => Math.abs(a[0] * SEG - car.s) - Math.abs(b[0] * SEG - car.s));
@@ -1025,12 +1028,13 @@ function rebuildPools() {
       }
       if (t.kind >= 9) {
         const bi = t.kind - 9, style = t.lite % 4;
-        const pool = buildingMeshes[bi][style], index = buildingCounts[bi][style];
+        const variant = Math.min(BUILDING_FACADE_VARIANTS - 1, Math.floor(t.tint * BUILDING_FACADE_VARIANTS));
+        const pool = buildingMeshes[bi][style][variant], index = buildingCounts[bi][style][variant];
         if (index >= pool.instanceMatrix.count) continue;
         pool.setMatrixAt(index, _m4);
         buildingTint(style, t.tint);
         pool.setColorAt(index, _c);
-        buildingCounts[bi][style]++;
+        buildingCounts[bi][style][variant]++;
         continue;
       }
       const pool = plantPools[t.kind], index = plantCounts[t.kind];
@@ -1099,11 +1103,11 @@ function rebuildPools() {
   bandMesh.count = nB; postMesh.count = nP; reflMesh.count = nR; pierMesh.count = nPier;
   lampPoleMesh.count = nLamp; lampHeadMesh.count = nLamp; lampGlowMesh.count = 0;
   beaconMesh.count = nBeacon; beaconGreenMesh.count = nBeaconG; spireMesh.count = nSpire;
-  buildingMeshes.forEach((row, bi) => row.forEach((pool, style) => {
-    pool.count = buildingCounts[bi][style];
+  buildingMeshes.forEach((row, bi) => row.forEach((styleRow, style) => styleRow.forEach((pool, variant) => {
+    pool.count = buildingCounts[bi][style][variant];
     pool.instanceMatrix.needsUpdate = true;
     if (pool.instanceColor) pool.instanceColor.needsUpdate = true;
-  }));
+  })));
   bandMesh.instanceMatrix.needsUpdate = true;
   postMesh.instanceMatrix.needsUpdate = true;
   reflMesh.instanceMatrix.needsUpdate = true;
@@ -2133,7 +2137,7 @@ function computeSky() {
   stars.visible = nightF > 0.02;
   headLights.forEach(h => h.intensity = nightF * 90);
   const facadeGlow = [3.1, 3.6, 4.0, 3.2];
-  buildingMats.forEach((mat, i) => { mat.emissiveIntensity = nightF * facadeGlow[i]; });
+  buildingMats.forEach((variants, i) => variants.forEach(mat => { mat.emissiveIntensity = nightF * facadeGlow[i]; }));
   spireMat.emissiveIntensity = nightF * 5.2;
   lampMat.emissiveIntensity = nightF * 5;
   beaconMat.emissiveIntensity = 0.35 + nightF * 2.4;
@@ -2795,6 +2799,7 @@ function frame() {
   snapNext = false;
   updateAnchors();
   updateHUD();
+  drawMiniMap();
   updateSound();
   updateWipers(dt);
   renderer.render(scene, camera);
@@ -2809,6 +2814,7 @@ addEventListener('resize', () => {
 
 /* ---------------- 지형 고르기 ---------------- */
 const MIX_KEYS = ['mountain', 'coast', 'city', 'river'];
+const TERRAIN_COLORS = { mountain: '#8ea4b8', coast: '#2f9ec4', city: '#e2a15a', river: '#4d6fd0' };
 function balanceMix(current, changed, value) {
   const next = { ...current };
   value = clamp(Math.round(value), 0, 100);
@@ -2869,7 +2875,6 @@ function drawMapStrip() {
   const ctx = canvas.getContext('2d');
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   const span = 8000, step = 40, n = span / step;
-  const colors = { mountain: '#8ea4b8', coast: '#2f9ec4', city: '#e2a15a', river: '#4d6fd0' };
   const kinds = { mountain: 0, coast: 0, city: 0, river: 0 };
   const ys = [];
   for (let i = 0; i < n; i++) {
@@ -2877,7 +2882,7 @@ function drawMapStrip() {
     const kind = terrainKind(s);
     kinds[kind]++;
     ys.push(roadYAt(s));
-    ctx.fillStyle = colors[kind];
+    ctx.fillStyle = TERRAIN_COLORS[kind];
     ctx.fillRect(i * cssW / n, 0, cssW / n + 1, cssH);
   }
   let minY = Math.min(...ys), maxY = Math.max(...ys);
@@ -2900,6 +2905,46 @@ function drawMapStrip() {
   const labels = { mountain: '산', coast: '해안', city: '도시', river: '강' };
   const stats = document.getElementById('mpStats');
   if (stats) stats.textContent = '앞 8km · ' + MIX_KEYS.map((k, i) => labels[k] + ' ' + rounded[i] + '%').join(' · ');
+}
+/* ---------------- 우상단 미니맵: 주행 중 헤딩업 레이더 ---------------- */
+const miniMapCv = document.getElementById('miniMapCv');
+let miniMapSize = 0;
+function drawMiniMap() {
+  if (!miniMapCv || mapPreview) return;
+  const cssSize = miniMapCv.clientWidth || 150;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  if (miniMapSize !== cssSize) {
+    miniMapSize = cssSize;
+    miniMapCv.width = Math.round(cssSize * dpr);
+    miniMapCv.height = Math.round(cssSize * dpr);
+  }
+  const ctx = miniMapCv.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, cssSize, cssSize);
+  const AHEAD = 420, BEHIND = 90, STEP = 6;
+  const cx = cssSize / 2, cy = cssSize * 0.6;
+  const scale = cssSize * 0.46 / AHEAD;
+  const yaw = car.yaw, sinY = Math.sin(yaw), cosY = Math.cos(yaw);
+  const sMin = Math.max(baseS, car.s - BEHIND), sMax = Math.min(baseS + roadSamples.length - 1, car.s + AHEAD);
+  ctx.lineWidth = 4;
+  ctx.lineCap = 'round';
+  let prevPx = null, prevPy = null;
+  for (let s = sMin; s <= sMax; s += STEP) {
+    const p = sampleAt(s);
+    const dx = p.x - car.pos.x, dz = p.z - car.pos.z;
+    const along = -(dx * sinY + dz * cosY), side = dx * cosY - dz * sinY;
+    const px = cx + side * scale, py = cy - along * scale;
+    if (prevPx !== null) {
+      ctx.strokeStyle = TERRAIN_COLORS[terrainKind(s)];
+      ctx.beginPath(); ctx.moveTo(prevPx, prevPy); ctx.lineTo(px, py); ctx.stroke();
+    }
+    prevPx = px; prevPy = py;
+  }
+  // 차량 마커: 헤딩업이라 항상 중심에서 위를 향한 삼각형으로 고정
+  ctx.fillStyle = '#fff';
+  ctx.beginPath();
+  ctx.moveTo(cx, cy - 7); ctx.lineTo(cx - 5, cy + 6); ctx.lineTo(cx + 5, cy + 6);
+  ctx.closePath(); ctx.fill();
 }
 // 리로드 없이 그 자리에서 다시 생성: 믹스/복잡도만 바뀌고 시드는 그대로라
 // 도로 중심선·세그먼트·식생 풀을 전부 비우고 같은 규칙으로 다시 쌓으면 된다.
