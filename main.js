@@ -1253,7 +1253,7 @@ if (isTouch) {
       const len = Math.hypot(dx, dy);
       if (len > RADIUS) { dx = dx / len * RADIUS; dy = dy / len * RADIUS; }
       setKnob(dx, dy);
-      touchSteer = Math.max(-1, Math.min(1, dx / RADIUS));
+      touchSteer = Math.max(-1, Math.min(1, -dx / RADIUS));
     };
     joyBase.addEventListener('pointerdown', e => {
       e.preventDefault(); initAudio(); joyPid = e.pointerId; joyBase.classList.add('active');
