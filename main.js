@@ -72,7 +72,7 @@ function zoneBlockType(b) {
 }
 function zoneSpan(b, type) {
   const base = b * ZONE_PERIOD;
-  if (mixCustom) return { s0: base, s1: base + ZONE_PERIOD };
+  if (mixCustom && type === 'coast') return { s0: base, s1: base + ZONE_PERIOD };
   const margin = ZONE_PERIOD * 0.25;
   const len = type === 'city' ? lerp(320, 480, hash2(b + WORLD_SEED, 401))
     : lerp(70, 110, hash2(b + WORLD_SEED, 401));
@@ -99,11 +99,6 @@ const riverAmount = s => {
   return sstep(z.s0, z.s0 + 18, s) * (1 - sstep(z.s1 - 18, z.s1, s));
 };
 function terrainKind(s) {
-  if (mixCustom) {
-    if (s < 0) return 'mountain';
-    const type = zoneBlockType(Math.floor(s / ZONE_PERIOD));
-    return type === 'none' ? 'mountain' : type;
-  }
   if (cityAmount(s) > 0.45) return 'city';
   if (riverAmount(s) > 0.45) return 'river';
   if (coastAmount(s) > 0.45) return 'coast';
@@ -305,7 +300,10 @@ const sea = new THREE.Mesh(new THREE.PlaneGeometry(6400, 6400, 128, 128), new TH
       vec3 lamp=mix(warm,coolL,step(0.76,which));
       lamp=mix(lamp,green,step(0.92,which));
       lamp=mix(lamp,red,step(0.97,which));
-      float win=smoothstep(0.78,0.96,fract(sin(floor(uvSea.x*0.37)+floor(uvSea.y*0.11)*17.0)*43.1));
+      vec2 winCell=floor(vec2(uvSea.x*0.37,uvSea.y*0.11)); vec2 winF=fract(vec2(uvSea.x*0.37,uvSea.y*0.11))-0.5;
+      float winHash=fract(sin(winCell.x*12.9898+winCell.y*78.233)*43758.5453);
+      vec2 winJitter=vec2(fract(winHash*97.13),fract(winHash*57.37))-0.5;
+      float win=smoothstep(0.86,0.99,winHash)*smoothstep(0.22,0.0,length(winF-winJitter*0.6));
       vec3 nightC=vec3(0.012,0.022,0.045)+lamp*streak*1.25+mix(warm,coolL,fract(uvSea.x*0.02))*win*0.28*fade;
       vec3 c=mix(dayC,nightC,night);
       c=mix(c,haze,smoothstep(fogNear,fogFar,seaDistance)*0.82);
