@@ -2402,13 +2402,13 @@ scene.add(mountains);
 const SEA_LEVEL = -24, SEA_ANCHOR_STEP = 200, RIVER_DEPTH = 5; // 강바닥은 항상 해수면보다 RIVER_DEPTH만큼 더 낮게 유지
 const sea = new THREE.Mesh(new THREE.PlaneGeometry(6400, 6400, 128, 128), new THREE.ShaderMaterial({
   side: THREE.FrontSide, depthTest: true, depthWrite: true,
-  uniforms: { time: { value: 0 }, light: { value: 1 }, summer: { value: season === 'summer' ? 1 : 0 },
+  uniforms: { time: { value: 0 }, light: { value: 1 }, night: { value: 0 }, summer: { value: season === 'summer' ? 1 : 0 },
     haze: { value: FOG_COLOR.clone() }, fogNear: { value: 90 }, fogFar: { value: 560 } },
   vertexShader: `varying vec2 uvSea; varying float seaDistance;
     void main(){ vec4 world=modelMatrix*vec4(position,1.0); uvSea=world.xz;
       vec4 view=modelViewMatrix*vec4(position,1.0); seaDistance=length(view.xyz);
       gl_Position=projectionMatrix*view; }`,
-  fragmentShader: `uniform float time; uniform float light; uniform float summer;
+  fragmentShader: `uniform float time; uniform float light; uniform float night; uniform float summer;
     uniform vec3 haze; uniform float fogNear; uniform float fogFar;
     varying vec2 uvSea; varying float seaDistance;
     void main(){ float wave=sin(uvSea.x*0.16+time*0.55+sin(uvSea.y*0.06))*sin(uvSea.y*0.32-time*0.4);
@@ -2416,7 +2416,19 @@ const sea = new THREE.Mesh(new THREE.PlaneGeometry(6400, 6400, 128, 128), new TH
       float glint=pow(max(0.0,wave),18.0)*grainFade;
       vec3 cool=mix(vec3(0.025,0.18,0.23),vec3(0.13,0.38,0.44),wave*0.16+0.5);
       vec3 turquoise=mix(vec3(0.018,0.36,0.43),vec3(0.08,0.66,0.61),wave*0.10+0.65);
-      vec3 c=(mix(cool,turquoise,summer)+glint*vec3(0.30,0.37,0.30))*light;
+      vec3 dayC=(mix(cool,turquoise,summer)+glint*vec3(0.30,0.37,0.30))*light;
+      float fade=1.0-smoothstep(40.0,520.0,seaDistance);
+      float shimmer=0.62+0.38*sin(uvSea.y*0.42-time*1.3+sin(uvSea.x*0.05));
+      float lane=abs(fract(uvSea.x*0.048)-0.5);
+      float streak=smoothstep(0.085,0.0,lane)*shimmer*fade;
+      float which=fract(sin(floor(uvSea.x*0.048)*91.7)*47.3);
+      vec3 warm=vec3(1.0,0.58,0.26), coolL=vec3(0.55,0.8,1.0), green=vec3(0.35,1.0,0.55), red=vec3(1.0,0.25,0.32);
+      vec3 lamp=mix(warm,coolL,step(0.76,which));
+      lamp=mix(lamp,green,step(0.92,which));
+      lamp=mix(lamp,red,step(0.97,which));
+      float win=smoothstep(0.78,0.96,fract(sin(floor(uvSea.x*0.37)+floor(uvSea.y*0.11)*17.0)*43.1));
+      vec3 nightC=vec3(0.012,0.022,0.045)+lamp*streak*1.25+mix(warm,coolL,fract(uvSea.x*0.02))*win*0.28*fade;
+      vec3 c=mix(dayC,nightC,night);
       c=mix(c,haze,smoothstep(fogNear,fogFar,seaDistance)*0.82);
       gl_FragColor=vec4(c,1.0);
       #include <tonemapping_fragment>
@@ -2907,40 +2919,59 @@ function buildPalmGeo() {
   }
   return mergePlantParts(parts);
 }
-// 도시 건물 외벽 텍스처: 창문 격자 + 켜진 창만 담은 emissive맵(야간에 nightF로 밝기 조절, 서울 야경처럼 따뜻한 조명 위주 + 가끔 차가운 톤)
-function buildBuildingTextures() {
-  const W = 128, H = 192, cols = 4, rows = 8, cw = W / cols, ch = H / rows;
+// 야간 외벽 4종. 0 주거(따뜻한 창), 1 오피스(차가운 유리), 2 간판·옥상 색등, 3 흰 격자 첨탑.
+function buildFacadeTextures(style) {
+  const W = 128, H = 192;
   const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
   const g = cv.getContext('2d');
-  g.fillStyle = '#9aa0a6'; g.fillRect(0, 0, W, H);
   const ecv = document.createElement('canvas'); ecv.width = W; ecv.height = H;
   const eg = ecv.getContext('2d');
+  g.fillStyle = ['#c8c2b4', '#8ea6ba', '#5c636e', '#c5ced6'][style];
+  g.fillRect(0, 0, W, H);
   eg.fillStyle = '#000'; eg.fillRect(0, 0, W, H);
+  const cols = [6, 8, 5, 4][style], rows = [10, 14, 9, 16][style];
+  const cw = W / cols, ch = H / rows;
   for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
-    const x = c * cw, y = r * ch, padX = cw * 0.18, padY = ch * 0.22;
-    const lit = Math.random() < 0.68;
-    g.fillStyle = lit ? '#3c362c' : '#3a3c40';
+    const x = c * cw, y = r * ch;
+    const padX = cw * [0.14, 0.16, 0.18, 0.18][style], padY = ch * [0.18, 0.2, 0.2, 0.16][style];
+    const band = style === 2 && r % 4 === 1;
+    const lattice = style === 3 && ((r + c) % 3 === 0 || r > rows - 4);
+    const lit = band || lattice || Math.random() < [0.78, 0.88, 0.64, 0.8][style];
+    g.fillStyle = lit ? (style === 1 ? '#24343f' : '#2c3036') : '#3e434a';
     g.fillRect(x + padX, y + padY, cw - padX * 2, ch - padY * 2);
-    if (lit) {
-      const warm = Math.random(), cool = Math.random() < 0.14;
-      eg.fillStyle = cool ? `hsl(202,55%,${55 + warm * 20}%)` : `hsl(${34 + warm * 24},78%,${48 + warm * 26}%)`;
-      eg.fillRect(x + padX, y + padY, cw - padX * 2, ch - padY * 2);
-    }
+    if (!lit) continue;
+    let col;
+    if (band) col = `hsl(${[330, 188, 28, 128][r % 4]},85%,58%)`;
+    else if (style === 3 && r > rows - 4) col = `hsl(42,28%,${82 + Math.random() * 14}%)`;
+    else if (style === 3) col = `hsl(206,18%,${74 + Math.random() * 18}%)`;
+    else if (style === 1) col = `hsl(${198 + Math.random() * 16},40%,${64 + Math.random() * 22}%)`;
+    else if (Math.random() < 0.14) col = `hsl(202,50%,${56 + Math.random() * 22}%)`;
+    else col = `hsl(${28 + Math.random() * 20},80%,${48 + Math.random() * 26}%)`;
+    eg.fillStyle = col;
+    eg.fillRect(x + padX, y + padY, cw - padX * 2, ch - padY * 2);
   }
+  eg.fillStyle = ['#e8b15a', '#e7f7ff', '#7dffe0', '#fff6d8'][style];
+  eg.fillRect(0, 0, W, H * 0.04);
   const map = new THREE.CanvasTexture(cv);
-  map.wrapS = map.wrapT = THREE.RepeatWrapping; map.repeat.set(3, 5);
+  map.wrapS = map.wrapT = THREE.RepeatWrapping;
+  map.repeat.set([4, 5, 3, 2][style], [7, 9, 6, 8][style]);
   map.colorSpace = THREE.SRGBColorSpace;
-  map.anisotropy = Math.min(16, renderer.capabilities.getMaxAnisotropy());
+  map.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
   const emissiveMap = new THREE.CanvasTexture(ecv);
-  emissiveMap.wrapS = emissiveMap.wrapT = THREE.RepeatWrapping; emissiveMap.repeat.copy(map.repeat);
+  emissiveMap.wrapS = emissiveMap.wrapT = THREE.RepeatWrapping;
+  emissiveMap.repeat.copy(map.repeat);
   emissiveMap.colorSpace = THREE.SRGBColorSpace;
   return { map, emissiveMap };
 }
-const buildingTex = buildBuildingTextures();
-const buildingMat = new THREE.MeshStandardMaterial({
-  vertexColors: true, map: buildingTex.map, emissiveMap: buildingTex.emissiveMap,
-  emissive: 0xffffff, emissiveIntensity: 0, roughness: 0.85, envMapIntensity: 0.2
+const buildingMats = [0, 1, 2, 3].map(style => {
+  const tex = buildFacadeTextures(style);
+  return new THREE.MeshStandardMaterial({
+    vertexColors: true, map: tex.map, emissiveMap: tex.emissiveMap,
+    emissive: 0xffffff, emissiveIntensity: 0,
+    roughness: style === 1 ? 0.42 : 0.82, metalness: style === 1 ? 0.18 : 0.04, envMapIntensity: 0.2
+  });
 });
+const spireMat = buildingMats[3].clone();
 // 도시 건물: 단순 박스 벽 + 얇은 지붕 캡. 인스턴스 컬러가 전체에 곱해져 지붕은 벽보다 자동으로 어두워짐.
 function buildBoxBuildingGeo() {
   const wall = new THREE.BoxGeometry(1, 1, 1); wall.translate(0, 0.5, 0);
@@ -2966,7 +2997,25 @@ function buildSlabBuildingGeo() {
   colorize(roof, 0.56, 0.58, 0.62);
   return mergeGeometries([wall, roof]);
 }
-const plantGeometries = [buildBareGeo(0), buildBareGeo(1), buildBareGeo(2), buildConiferGeo(0), buildConiferGeo(1), buildBareGeo(0, true), buildBareGeo(1, true), buildSnowRockGeo(), buildPalmGeo(), buildBoxBuildingGeo(), buildTowerBuildingGeo(), buildSlabBuildingGeo()];
+function buildSpireBuildingGeo() {
+  const parts = [];
+  const add = (w, h, d, y, rotY = 0) => {
+    const geo = new THREE.BoxGeometry(w, h, d);
+    if (rotY) geo.rotateY(rotY);
+    geo.translate(0, y, 0);
+    colorize(geo, 1, 1, 1);
+    parts.push(geo);
+  };
+  add(0.72, 0.14, 0.72, 0.07);
+  add(0.34, 0.5, 0.34, 0.39);
+  add(0.2, 0.16, 0.2, 0.72);
+  add(0.09, 0.2, 0.09, 0.9);
+  add(0.035, 0.3, 0.52, 0.68, Math.PI / 4);
+  add(0.035, 0.3, 0.52, 0.68, -Math.PI / 4);
+  return mergeGeometries(parts);
+}
+const plantGeometries = [buildBareGeo(0), buildBareGeo(1), buildBareGeo(2), buildConiferGeo(0), buildConiferGeo(1), buildBareGeo(0, true), buildBareGeo(1, true), buildSnowRockGeo(), buildPalmGeo()];
+const buildingGeos = [buildBoxBuildingGeo(), buildTowerBuildingGeo(), buildSlabBuildingGeo()];
 // 가드레일: 회색 레일 + 위에 얹은 눈층을 하나로 합침
 function buildRailBandGeo() {
   const rail = new THREE.BoxGeometry(0.12, 0.28, 2.3); rail.translate(0, 0.55, 0);
@@ -3009,10 +3058,17 @@ const lampPoleGeo = buildLampPoleGeo();
 const lampPoleMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.7 });
 const lampHeadGeo = new THREE.BoxGeometry(0.22, 0.14, 0.22);
 lampHeadGeo.translate(0.56, 3.33, 0);
-const lampMat = new THREE.MeshStandardMaterial({ color: 0x4a3a1a, emissive: 0xffb347, emissiveIntensity: 0, roughness: 0.6 });
-// 고층 타워 꼭대기 적색 항공장애등: 낮에도 은은히, 야간엔 nightF로 밝게
+const lampMat = new THREE.MeshStandardMaterial({ color: 0xfff1d2, emissive: 0xffc56b, emissiveIntensity: 0, roughness: 0.35 });
+const lampGlowGeo = new THREE.SphereGeometry(0.42, 8, 6);
+lampGlowGeo.translate(0.56, 3.33, 0);
+const lampGlowMat = new THREE.MeshBasicMaterial({
+  color: 0xffc27a, transparent: true, opacity: 0, depthWrite: false,
+  blending: THREE.AdditiveBlending, toneMapped: false
+});
+// 타워 꼭대기 항공등: 적색이 기본, 일부는 남산타워처럼 녹색
 const beaconGeo = new THREE.SphereGeometry(0.16, 8, 6);
 const beaconMat = new THREE.MeshStandardMaterial({ color: 0x4a0804, emissive: 0xff2200, emissiveIntensity: 0.4, roughness: 0.5 });
+const beaconGreenMat = new THREE.MeshStandardMaterial({ color: 0x0c3a18, emissive: 0x3dff7a, emissiveIntensity: 0.25, roughness: 0.5 });
 
 /* ---------------- InstancedMesh 풀 ---------------- */
 const TREE_CAP = 720, RAIL_CAP = 300, POST_CAP = 150, REFL_CAP = 90, PIER_CAP = 36, LAMP_CAP = 120, BEACON_CAP = 40;
@@ -3025,10 +3081,18 @@ function makeInst(geo, mat, cap) {
   return m;
 }
 const plantPools = plantGeometries.map((geo, kind) => {
-  const mesh = makeInst(geo, kind >= 9 ? buildingMat : trunkMat, kind < 5 ? 200 : kind < 7 ? 300 : kind < 9 ? 100 : kind === 9 ? 140 : kind === 10 ? 70 : 90);
+  const mesh = makeInst(geo, trunkMat, kind < 5 ? 200 : kind < 7 ? 300 : 100);
   mesh.count = 0; mesh.receiveShadow = true;
   return mesh;
 });
+const buildingCaps = [56, 40, 40];
+const buildingMeshes = buildingGeos.map((geo, ki) => buildingMats.map(mat => {
+  const mesh = makeInst(geo, mat, buildingCaps[ki]);
+  mesh.count = 0; mesh.receiveShadow = true;
+  return mesh;
+}));
+const spireMesh = makeInst(buildSpireBuildingGeo(), spireMat, 8);
+spireMesh.count = 0; spireMesh.receiveShadow = true;
 const bandMesh = makeInst(railBandGeo, railMat, RAIL_CAP);
 const postMesh = makeInst(railPostGeo, railMat, POST_CAP);
 const reflMesh = makeInst(reflGeo, reflMat, REFL_CAP);
@@ -3036,36 +3100,57 @@ const pierMesh = makeInst(pierGeo, pierMat, PIER_CAP);
 pierMesh.receiveShadow = true;
 const lampPoleMesh = makeInst(lampPoleGeo, lampPoleMat, LAMP_CAP);
 const lampHeadMesh = makeInst(lampHeadGeo, lampMat, LAMP_CAP);
+const lampGlowMesh = makeInst(lampGlowGeo, lampGlowMat, LAMP_CAP);
+lampGlowMesh.castShadow = false; lampGlowMesh.receiveShadow = false;
 const beaconMesh = makeInst(beaconGeo, beaconMat, BEACON_CAP);
+const beaconGreenMesh = makeInst(beaconGeo, beaconGreenMat, BEACON_CAP);
 
 const UP = new THREE.Vector3(0, 1, 0);
 const _m4 = new THREE.Matrix4(), _q = new THREE.Quaternion(), _p = new THREE.Vector3(), _s = new THREE.Vector3(1, 1, 1), _c = new THREE.Color();
 const activeTrees = []; // 충돌 판정용
 let dirtyPools = true;
 
+function buildingTint(style, tint) {
+  const v1 = (tint * 7) % 1, v2 = (tint * 13) % 1;
+  if (style === 1) _c.setHSL(lerp(0.55, 0.62, v1), lerp(0.28, 0.48, v2), lerp(0.46, 0.62, v1));
+  else if (style === 2) _c.setHSL(0, 0, lerp(0.28, 0.42, v1));
+  else if (style === 3) _c.setHSL(0.58, 0.08, lerp(0.72, 0.86, v1));
+  else _c.setHSL(0.08 + v1 * 0.04, lerp(0.08, 0.18, v2), lerp(0.74, 0.9, v1));
+}
 function rebuildPools() {
-  let nT = 0, nB = 0, nP = 0, nR = 0, nPier = 0, nLamp = 0, nBeacon = 0;
+  let nT = 0, nB = 0, nP = 0, nR = 0, nPier = 0, nLamp = 0, nBeacon = 0, nBeaconG = 0, nSpire = 0;
   const plantCounts = plantPools.map(() => 0);
+  const buildingCounts = buildingMeshes.map(row => row.map(() => 0));
   activeTrees.length = 0;
   // 풀이 가득 차도 차량 근처의 군집을 우선해 눈앞의 식생이 사라지지 않게 한다.
   const ordered = Array.from(segments.entries()).sort((a, b) => Math.abs(a[0] * SEG - car.s) - Math.abs(b[0] * SEG - car.s));
   for (const [, seg] of ordered) {
     for (const t of seg.trees) {
-      const pool = plantPools[t.kind], index = plantCounts[t.kind];
-      if (index >= pool.instanceMatrix.count || (t.kind < 5 && nT >= TREE_CAP)) continue;
       _q.setFromAxisAngle(UP, t.rot);
       _p.set(t.x, t.y, t.z); _s.set(t.s * t.width, t.s, t.s * t.width);
       _m4.compose(_p, _q, _s);
-      pool.setMatrixAt(index, _m4);
-      if (t.kind >= 9) {
-        // 건물은 4가지 외장재 계열(연한 콘크리트/블루 글라스/다크 그래파이트/테라코타)에서 골라 스카이라인에 재질감을 섞는다.
-        const fam = Math.floor(t.tint * 4) % 4, v1 = (t.tint * 7) % 1, v2 = (t.tint * 13) % 1;
-        if (fam === 0) _c.setHSL(0.09 + v1 * 0.05, lerp(0.06, 0.16, v2), lerp(0.78, 0.93, v1));
-        else if (fam === 1) _c.setHSL(lerp(0.55, 0.62, v1), lerp(0.35, 0.55, v2), lerp(0.40, 0.56, v1));
-        else if (fam === 2) _c.setHSL(0, 0, lerp(0.22, 0.38, v1));
-        else _c.setHSL(lerp(0.02, 0.06, v1), lerp(0.35, 0.52, v2), lerp(0.40, 0.54, v1));
+      if (t.kind === 12) {
+        if (nSpire >= spireMesh.instanceMatrix.count) continue;
+        spireMesh.setMatrixAt(nSpire, _m4);
+        _c.setRGB(0.9, 0.93, 0.96);
+        spireMesh.setColorAt(nSpire, _c);
+        nSpire++;
+        continue;
       }
-      else _c.setRGB(0.92 + t.tint * 0.08, 0.95 + t.tint * 0.05, 1);
+      if (t.kind >= 9) {
+        const bi = t.kind - 9, style = t.lite % 4;
+        const pool = buildingMeshes[bi][style], index = buildingCounts[bi][style];
+        if (index >= pool.instanceMatrix.count) continue;
+        pool.setMatrixAt(index, _m4);
+        buildingTint(style, t.tint);
+        pool.setColorAt(index, _c);
+        buildingCounts[bi][style]++;
+        continue;
+      }
+      const pool = plantPools[t.kind], index = plantCounts[t.kind];
+      if (index >= pool.instanceMatrix.count || (t.kind < 5 && nT >= TREE_CAP)) continue;
+      pool.setMatrixAt(index, _m4);
+      _c.setRGB(0.92 + t.tint * 0.08, 0.95 + t.tint * 0.05, 1);
       pool.setColorAt(index, _c);
       plantCounts[t.kind]++;
       if (t.kind < 5) {
@@ -3111,11 +3196,14 @@ function rebuildPools() {
       nLamp++;
     }
     for (const bc of seg.beacons) {
-      if (nBeacon >= BEACON_CAP) break;
+      const mesh = bc.green ? beaconGreenMesh : beaconMesh;
+      const n = bc.green ? nBeaconG : nBeacon;
+      if (n >= mesh.instanceMatrix.count) continue;
       _q.identity();
       _p.set(bc.x, bc.y, bc.z); _s.set(1, 1, 1);
       _m4.compose(_p, _q, _s);
-      beaconMesh.setMatrixAt(nBeacon, _m4); nBeacon++;
+      mesh.setMatrixAt(n, _m4);
+      if (bc.green) nBeaconG++; else nBeacon++;
     }
   }
   plantPools.forEach((pool, kind) => {
@@ -3123,14 +3211,24 @@ function rebuildPools() {
     if (pool.instanceColor) pool.instanceColor.needsUpdate = true;
   });
   bandMesh.count = nB; postMesh.count = nP; reflMesh.count = nR; pierMesh.count = nPier;
-  lampPoleMesh.count = nLamp; lampHeadMesh.count = nLamp; beaconMesh.count = nBeacon;
+  lampPoleMesh.count = nLamp; lampHeadMesh.count = nLamp; lampGlowMesh.count = 0;
+  beaconMesh.count = nBeacon; beaconGreenMesh.count = nBeaconG; spireMesh.count = nSpire;
+  buildingMeshes.forEach((row, bi) => row.forEach((pool, style) => {
+    pool.count = buildingCounts[bi][style];
+    pool.instanceMatrix.needsUpdate = true;
+    if (pool.instanceColor) pool.instanceColor.needsUpdate = true;
+  }));
   bandMesh.instanceMatrix.needsUpdate = true;
   postMesh.instanceMatrix.needsUpdate = true;
   reflMesh.instanceMatrix.needsUpdate = true;
   pierMesh.instanceMatrix.needsUpdate = true;
   lampPoleMesh.instanceMatrix.needsUpdate = true;
   lampHeadMesh.instanceMatrix.needsUpdate = true;
+  lampGlowMesh.instanceMatrix.needsUpdate = true;
   beaconMesh.instanceMatrix.needsUpdate = true;
+  beaconGreenMesh.instanceMatrix.needsUpdate = true;
+  spireMesh.instanceMatrix.needsUpdate = true;
+  if (spireMesh.instanceColor) spireMesh.instanceColor.needsUpdate = true;
 }
 
 /* ---------------- 세그먼트 추가/제거 ---------------- */
@@ -3141,13 +3239,15 @@ function placeScenery(seg, s, lat, kind, id) {
   const isBuilding = kind >= 9;
   // 건물은 scale/width를 작은 배율이 아니라 "실제 미터" 단위로 써서 높이·바닥면적을 직접 지정한다.
   // kind 11(슬래브)은 로컬 지오메트리 자체가 가로로 넓어(1.6:1) footprintM은 세로(Z) 기준이다.
-  const footprintM = isBuilding ? lerp(kind === 11 ? 9 : 7, kind === 11 ? 15 : 16, hash2(id, 119)) : 0;
-  const scale = isBuilding ? (kind === 9 ? lerp(7, 18, hash2(id, 113)) : kind === 10 ? lerp(10, 28, hash2(id, 113)) : lerp(13, 21, hash2(id, 113)))
+  const footprintM = !isBuilding ? 0 : kind === 12 ? lerp(9, 12, hash2(id, 119))
+    : lerp(kind === 11 ? 9 : 7, kind === 11 ? 15 : 16, hash2(id, 119));
+  const scale = kind === 12 ? lerp(52, 74, hash2(id, 113))
+    : isBuilding ? (kind === 9 ? lerp(8, 20, hash2(id, 113)) : kind === 10 ? lerp(16, 36, hash2(id, 113)) : lerp(12, 22, hash2(id, 113)))
     : kind < 3 ? lerp(0.95, 1.65, hash2(id, 111))
     : kind < 5 ? lerp(0.8, 1.45, hash2(id, 113))
     : kind < 7 ? lerp(0.65, 1.3, hash2(id, 115)) : lerp(0.55, 1.1, hash2(id, 117));
   const width = isBuilding ? footprintM / scale : lerp(0.82, 1.18, hash2(id, 119));
-  const crown = isBuilding ? footprintM * (kind === 11 ? 1.6 : 1) * 0.6 + 5.6
+  const crown = kind === 12 ? 8 : isBuilding ? footprintM * (kind === 11 ? 1.6 : 1) * 0.6 + 5.6
     : (kind === 8 ? 3.2 : kind < 3 ? 3.4 : kind < 5 ? 2.4 : 1.1) * scale * width;
   for (let j = Math.max(0, Math.floor(s - baseS - 140)); j < Math.min(roadSamples.length, s - baseS + 140); j += 3) {
     const p = roadSamples[j];
@@ -3164,8 +3264,11 @@ function placeScenery(seg, s, lat, kind, id) {
   const meshY = u + f <= 1 ? h00 + u * (h10 - h00) + f * (h01 - h00)
     : h11 + (1 - u) * (h01 - h11) + (1 - f) * (h10 - h11);
   seg.trees.push({ x, z, y: meshY - 0.08, s: scale, width, kind,
-    rot: hash2(id, 121) * Math.PI * 2, tint: hash2(id, 123) });
-  if (kind === 10) seg.beacons.push({ x, y: meshY - 0.08 + scale, z }); // 타워 꼭대기 항공장애등
+    rot: hash2(id, 121) * Math.PI * 2, tint: hash2(id, 123),
+    lite: kind === 12 ? 3 : Math.floor(hash2(id, 307) * 4) % 4 });
+  if (kind === 10 || kind === 12) seg.beacons.push({
+    x, y: meshY - 0.08 + scale, z, green: kind === 10 && hash2(id, 333) < 0.28
+  });
 }
 function addSegment(i) {
   const s0 = i * SEG, s1 = s0 + SEG;
@@ -3220,17 +3323,27 @@ function addSegment(i) {
     }
   }
 
-  // 도시 구간: 좌우 3열의 느슨한 격자로 건물 배치(유기적 군집이 아니라 '블록'처럼 보이게)
+  // 도시 구간: 길가는 아파트·슬래브, 뒤쪽은 높은 타워. 구역 한가운데에 흰 격자 첨탑 하나.
   if (cityAmount(s0) > 0.5) {
+    const zone = zoneAt(s0 + 8);
+    if (zone && zone.type === 'city') {
+      const mid = (zone.s0 + zone.s1) * 0.5;
+      if (mid >= s0 && mid < s1) {
+        const side = hash2(Math.floor(zone.s0), 19) < 0.5 ? -1 : 1;
+        placeScenery(seg, mid, side * 36, 12, Math.floor(zone.s0) + 17);
+      }
+    }
     for (const side of [-1, 1]) {
       for (let row = 0; row < 3; row++) {
-        const rowLat = 9 + row * 11;
-        for (let s = s0 + 2; s < s1; s += 16) {
+        const rowLat = 9 + row * 12;
+        for (let s = s0 + 2; s < s1; s += 13) {
           const id = i * 97 + side * 131 + row * 13 + Math.floor(s) + WORLD_SEED % 2017;
-          const jitterLat = (hash2(id, 211) - 0.5) * 6;
-          const jitterS = (hash2(id, 223) - 0.5) * 6;
+          const jitterLat = (hash2(id, 211) - 0.5) * 4;
+          const jitterS = (hash2(id, 223) - 0.5) * 4;
           const pick = hash2(id, 227);
-          const kind = pick < 0.5 ? 9 : pick < 0.78 ? 10 : 11;
+          const kind = row === 0 ? (pick < 0.58 ? 11 : 9)
+            : row === 1 ? (pick < 0.42 ? 9 : pick < 0.74 ? 11 : 10)
+            : (pick < 0.32 ? 9 : 10);
           placeScenery(seg, s + jitterS, side * (rowLat + jitterLat), kind, id);
         }
       }
@@ -3247,10 +3360,11 @@ function addSegment(i) {
     }
   }
 
-  // 가로등: 도시 거리와 다리 구간에 ~20m 간격으로 배치(야간 nightF로 발광)
-  for (let s = s0 + 8; s < s1; s += 20) {
+  // 가로등: 다리는 14m, 도시는 한 칸 걸러 두어 강변 반영이 더 촘촘하다.
+  for (let s = s0 + 6; s < s1; s += 14) {
     const city = cityAmount(s), river = riverAmount(s);
     if (city < 0.5 && river < 0.5) continue;
+    if (city >= 0.5 && Math.floor(s / 14) % 2 === 1) continue;
     const r = sampleAt(s), lat0 = city >= 0.5 ? 7.4 : 5.6;
     for (const side of [-1, 1]) {
       const lat = side * lat0;
@@ -3921,6 +4035,7 @@ function updateAnchors() {
     SEA_LEVEL, Math.floor(camera.position.z / SEA_ANCHOR_STEP) * SEA_ANCHOR_STEP);
   sea.material.uniforms.time.value = performance.now() * 0.001;
   sea.material.uniforms.light.value = (0.24 + dayLight * 0.76) * (1 - W.dark * 0.4);
+  sea.material.uniforms.night.value = nightF;
   sea.material.uniforms.summer.value = summerVisual();
   sea.material.uniforms.haze.value.copy(scene.fog.color);
   sea.material.uniforms.fogNear.value = scene.fog.near;
@@ -4069,9 +4184,12 @@ function computeSky() {
   stars.material.opacity = nightF * 0.9;
   stars.visible = nightF > 0.02;
   headLights.forEach(h => h.intensity = nightF * 90);
-  buildingMat.emissiveIntensity = nightF * 1.8;
-  lampMat.emissiveIntensity = nightF * 2.2;
-  beaconMat.emissiveIntensity = 0.4 + nightF * 2.1;
+  const facadeGlow = [3.1, 3.6, 4.0, 3.2];
+  buildingMats.forEach((mat, i) => { mat.emissiveIntensity = nightF * facadeGlow[i]; });
+  spireMat.emissiveIntensity = nightF * 5.2;
+  lampMat.emissiveIntensity = nightF * 5;
+  beaconMat.emissiveIntensity = 0.35 + nightF * 2.4;
+  beaconGreenMat.emissiveIntensity = 0.2 + nightF * 3.0;
 }
 function updateWeather(dt) {
   const L = 1 - Math.exp(-dt * 0.9);
@@ -4089,8 +4207,8 @@ function updateWeather(dt) {
   flashT = Math.max(0, flashT - dt * 3.2);
   distanceAtmosphere.color.value.copy(scene.fog.color);
   distanceAtmosphere.density.value = 1 + W.fog * 0.85;
-  sun.intensity = (0.12 + dayLight * 1.30) * (1 - 0.65 * d) + flashT * 2.4;
-  hemi.intensity = (0.08 + dayLight * 0.70) * (1 - 0.55 * d) + flashT * 1.2;
+  sun.intensity = (0.05 + dayLight * 1.37) * (1 - 0.65 * d) + flashT * 2.4;
+  hemi.intensity = (0.035 + dayLight * 0.745) * (1 - 0.55 * d) + flashT * 1.2;
   sun.color.copy(_sunCol).lerp(new THREE.Color(0xffdda3), summerVisual()*dayLight*(1-d)*0.36);
   hemi.groundColor.setHex(0xeef1f4).lerp(new THREE.Color(0xd8ba8a), summerVisual()*0.65);
   roadMat.envMapIntensity = 0.45 + p * 0.6;   // 젖은 반사
