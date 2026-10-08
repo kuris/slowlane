@@ -214,7 +214,7 @@ for (let layer = 0; layer < 3; layer++) for (const side of [-1, 1]) {
 scene.add(mountains);
 // 카메라 바로 아래를 공유 정점으로 삼는 거대한 삼각형 부채꼴은 근거리 클리핑에 취약하다.
 // 작은 세계 좌표 격자로 수면을 그려 실내·육지와의 깊이 관계를 유지한다.
-const SEA_LEVEL = -24, SEA_ANCHOR_STEP = 200;
+const SEA_LEVEL = -24, SEA_ANCHOR_STEP = 200, RIVER_DEPTH = 5; // 강바닥은 항상 해수면보다 RIVER_DEPTH만큼 더 낮게 유지
 const sea = new THREE.Mesh(new THREE.PlaneGeometry(6400, 6400, 128, 128), new THREE.ShaderMaterial({
   side: THREE.FrontSide, depthTest: true, depthWrite: true,
   uniforms: { time: { value: 0 }, light: { value: 1 }, summer: { value: season === 'summer' ? 1 : 0 },
@@ -445,10 +445,10 @@ function groundY(s, lat) {
     const cityBelt = 1 - sstep(60, 90, a);
     h = lerp(h, cityFlat, city * cityBelt);
   }
-  // 강 구간: 도로 양옆 전체 폭에서 수면 높이까지 내려가는 계곡(다리 상판은 roadYAt로 별도 유지)
+  // 강 구간: 도로 양옆 전체 폭에서 수면보다 확실히 낮은 강바닥까지 내려가는 계곡(다리 상판은 roadYAt로 별도 유지)
   const river = riverAmount(s);
   if (river > 0.001) {
-    const bedY = Math.min(SEA_LEVEL, sampleAt(s).y - 8);
+    const bedY = Math.min(SEA_LEVEL - RIVER_DEPTH, sampleAt(s).y - 8);
     const bank = lerp(bedY, h, sstep(8, 70, a));
     h = lerp(h, bank, river);
   }
@@ -963,7 +963,7 @@ function addSegment(i) {
   // 강 구간: 다리 상판 아래 교각(장식용, 차량과 충돌하지 않음)
   for (let s = s0; s < s1; s += 10) {
     if (riverAmount(s) < 0.5) continue;
-    const r = sampleAt(s), deckY = r.y - 0.06, bedY = Math.min(SEA_LEVEL, r.y - 8);
+    const r = sampleAt(s), deckY = r.y - 0.06, bedY = Math.min(SEA_LEVEL - RIVER_DEPTH, r.y - 8);
     for (const side of [-1, 1]) {
       const lat = side * 3.6;
       seg.piers.push({ x: r.x + r.rx * lat, y: deckY, z: r.z + r.rz * lat, height: deckY - bedY });
