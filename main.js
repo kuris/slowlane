@@ -37,6 +37,10 @@ let MIX = { mountain: 50, coast: 22, city: 16, river: 12 };
 let COMPLEX = 50;
 let complexMul = 1;
 let mapPreview = false;
+const PREVIEW_LOOK = 80, PREVIEW_BACK = 18, PREVIEW_UP = 22, PREVIEW_SPAN = 8000;
+let previewS = 6;
+let previewYaw = 0;
+let previewPitch = -Math.atan2(PREVIEW_UP - 1.6, PREVIEW_BACK + PREVIEW_LOOK);
 // 첫 900m: 낮은 구릉의 리듬. 해안 형상은 계절과 무관해 전환 중에도 연속적이다.
 const scenicBlend = s => mixCustom ? 0 : 1 - sstep(900, 1200, s);
 const showcaseAmount = s => mixCustom ? 0 : 1 - sstep(1200, 1800, s);
@@ -1301,7 +1305,7 @@ function ensureSegments() {
   for (const [i, seg] of Array.from(segments)) {
     if (i < behind || i > ahead) { removeSegment(seg); segments.delete(i); changed = true; }
   }
-  while (baseS < car.s - 170) { roadSamples.shift(); baseS++; } // 뒤쪽 샘플 정리
+  if (!mapPreview) while (baseS < car.s - 170) { roadSamples.shift(); baseS++; } // 미리보기 중에는 8km를 앞뒤로 보게 샘플을 남긴다
   if (changed) rebuildPools();
 }
 
@@ -1613,6 +1617,12 @@ addEventListener('keydown', e => {
   initAudio();
   const k = KEYMAP[e.code];
   if (k) { key[k] = true; if (e.code.startsWith('Arrow') || e.code === 'Space') e.preventDefault(); }
+  if (mapPreview && !(e.target instanceof Element && e.target.closest('input, textarea'))) {
+    if (e.code === 'ArrowLeft' || e.code === 'KeyA') previewYaw = clamp(previewYaw - 0.12, -Math.PI, Math.PI);
+    else if (e.code === 'ArrowRight' || e.code === 'KeyD') previewYaw = clamp(previewYaw + 0.12, -Math.PI, Math.PI);
+    else if (e.code === 'ArrowUp' || e.code === 'KeyW') previewS = clamp(previewS + 80, 0, PREVIEW_SPAN);
+    else if (e.code === 'ArrowDown' || e.code === 'KeyS') previewS = clamp(previewS - 80, 0, PREVIEW_SPAN);
+  }
   if (e.code === 'KeyC') cycleCam();
   else if (e.code === 'KeyN') togglePanel();
   else if (e.code === 'KeyM') toggleMute();
@@ -1620,6 +1630,33 @@ addEventListener('keydown', e => {
   else if (e.code === 'KeyV' || (e.code === 'Escape' && cinematic)) toggleCinema();
 });
 addEventListener('pointerdown', initAudio);
+function previewUI(target) {
+  return target instanceof Element && !!target.closest('#mapPick, #wpanel, #bStartMusic, .tc-top, a');
+}
+const previewPointers = new Map();
+addEventListener('pointerdown', e => {
+  if (!mapPreview || e.button !== 0 || previewUI(e.target)) return;
+  previewPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+});
+addEventListener('pointermove', e => {
+  const p = previewPointers.get(e.pointerId);
+  if (!p || !mapPreview) return;
+  const dx = e.clientX - p.x, dy = e.clientY - p.y;
+  p.x = e.clientX; p.y = e.clientY;
+  if (previewPointers.size >= 2) previewS = clamp(previewS + dy * 1.6, 0, PREVIEW_SPAN);
+  else {
+    previewYaw = clamp(previewYaw - dx * 0.005, -Math.PI, Math.PI);
+    previewPitch = clamp(previewPitch - dy * 0.004, -1.15, 0.55);
+  }
+});
+const endPreviewPointer = e => previewPointers.delete(e.pointerId);
+addEventListener('pointerup', endPreviewPointer);
+addEventListener('pointercancel', endPreviewPointer);
+addEventListener('wheel', e => {
+  if (!mapPreview || previewUI(e.target)) return;
+  e.preventDefault();
+  previewS = clamp(previewS + e.deltaY * 0.85, 0, PREVIEW_SPAN);
+}, { passive: false });
 addEventListener('keyup', e => { const k = KEYMAP[e.code]; if (k) key[k] = false; });
 addEventListener('blur', () => { for (const k in key) key[k] = false; touchSteer = 0; touchGas = 0; touchBrake = 0; });
 
@@ -1913,16 +1950,28 @@ function updateCamera(dt, snap = false) {
     camera.position.y += (Math.random() - 0.5) * s;
   }
 }
-// 미리보기: 도로 전방 f = (-sin h, 0, -cos h). 카메라는 그 뒤 18m, 위 22m에서 80m 앞을 본다.
+// 미리보기: 도로는 f = (-sin h, 0, -cos h). 기본 자리는 그 뒤 18m, 위 22m이고 시선만 돌린다.
 function updatePreviewCamera() {
-  const s = car.s;
+  const s = clamp(previewS, 0, PREVIEW_SPAN);
+  previewS = s;
   const anchor = sampleAt(s);
-  const ahead = sampleAt(s + 80);
-  const fx = -Math.sin(anchor.h), fz = -Math.cos(anchor.h);
-  camera.position.set(anchor.x - fx * 18, anchor.y + 22, anchor.z - fz * 18);
+  car.s = s;
+  car.pos.set(anchor.x, 0, anchor.z);
+  car.yaw = anchor.h;
+  car.y = anchor.y + 0.02;
+  car.vx = car.vz = car.vF = car.vR = 0;
+  carGroup.position.set(anchor.x, car.y, anchor.z);
+  carGroup.rotation.y = anchor.h;
+  const roadX = -Math.sin(anchor.h), roadZ = -Math.cos(anchor.h);
+  const lookH = anchor.h + previewYaw;
+  const fx = -Math.sin(lookH), fz = -Math.cos(lookH);
+  const horiz = Math.cos(previewPitch), vert = Math.sin(previewPitch);
+  camera.position.set(anchor.x - roadX * PREVIEW_BACK, anchor.y + PREVIEW_UP, anchor.z - roadZ * PREVIEW_BACK);
   camera.up.set(0, 1, 0);
-  camera.lookAt(ahead.x, ahead.y + 1.6, ahead.z);
+  camera.lookAt(camera.position.x + fx * horiz, camera.position.y + vert, camera.position.z + fz * horiz);
   if (camera.fov !== 56) { camera.fov = 56; camera.updateProjectionMatrix(); }
+  const cursor = document.getElementById('mpCursor');
+  if (cursor) cursor.style.left = (s / PREVIEW_SPAN * 100) + '%';
 }
 
 /* ---------------- 하늘/산/태양이 카메라를 따라다님 ---------------- */
@@ -2741,6 +2790,7 @@ const clock = new THREE.Clock();
 function frame() {
   requestAnimationFrame(frame);
   const dt = Math.min(clock.getDelta(), 0.05); // 탭 전환 등 긴 프레임 방지
+  if (mapPreview) car.s = clamp(previewS, 0, PREVIEW_SPAN);
   if (!mapPreview) updateVehicle(dt);
   ensureSegments();
   if (dirtyPools) { dirtyPools = false; rebuildPools(); } // GLB 로드 완료 등 풀 재구성 필요 시
@@ -2891,6 +2941,19 @@ function setupMapPicker() {
   };
   showMix(MIX, COMPLEX);
   drawMapStrip();
+  renderer.domElement.style.touchAction = 'none';
+  const mapCanvas = document.getElementById('mpMap');
+  const seekStrip = e => {
+    const rect = mapCanvas.getBoundingClientRect();
+    if (rect.width <= 0) return;
+    previewS = clamp((e.clientX - rect.left) / rect.width, 0, 1) * PREVIEW_SPAN;
+  };
+  mapCanvas.addEventListener('pointerdown', e => {
+    e.stopPropagation();
+    mapCanvas.setPointerCapture(e.pointerId);
+    seekStrip(e);
+  });
+  mapCanvas.addEventListener('pointermove', e => { if (mapCanvas.hasPointerCapture(e.pointerId)) seekStrip(e); });
   for (const k of MIX_KEYS) {
     const el = document.getElementById(sliderId[k]);
     el.addEventListener('input', () => showMix(balanceMix(readMix(), k, +el.value), +document.getElementById('mpComplex').value, k));
@@ -2918,6 +2981,19 @@ function setupMapPicker() {
         if (el) el.removeAttribute('aria-hidden');
       }
     }
+    previewS = DEBUG_START_S;
+    previewYaw = 0;
+    previewPitch = -Math.atan2(PREVIEW_UP - 1.6, PREVIEW_BACK + PREVIEW_LOOK);
+    const back = sampleAt(DEBUG_START_S);
+    car.pos.set(back.x, 0, back.z);
+    car.yaw = back.h;
+    car.y = back.y + 0.02;
+    car.s = DEBUG_START_S;
+    car.vx = car.vz = car.vF = car.vR = 0;
+    carGroup.position.set(car.pos.x, car.y, car.pos.z);
+    carGroup.rotation.y = car.yaw;
+    carGroup.updateMatrixWorld(true);
+    renderer.domElement.style.touchAction = '';
     snapNext = true;
     updateCamera(0.016, true);
   };

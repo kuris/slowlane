@@ -98,9 +98,12 @@ setTimeout(function () {
   <div class="mp-card">
     <div class="mp-title">지형 고르기</div>
     <div class="mp-seed">시드 <span id="mpSeed"></span></div>
-    <canvas id="mpMap" width="640" height="96"></canvas>
+    <div class="mp-mapwrap">
+      <canvas id="mpMap" width="640" height="96"></canvas>
+      <div id="mpCursor"></div>
+    </div>
     <div id="mpStats"></div>
-    <p class="mp-note">기본값은 지금의 초반 해안 도로를 유지합니다. 비율을 움직이면 처음부터 그 비율로 나뉩니다.</p>
+    <p class="mp-note">빈 곳을 드래그하면 둘러봅니다. 약도, 휠, 두 손가락으로 앞 8km를 따라갑니다. 기본 비율은 지금의 초반 해안 도로를 유지하고, 비율을 움직이면 처음부터 그 비율로 나뉩니다.</p>
     <div class="mp-grid">
       <label>산길 <output id="mpMountainOut">50%</output><input id="mpMountain" type="range" min="0" max="100" step="1" value="50"></label>
       <label>해안 <output id="mpCoastOut">22%</output><input id="mpCoast" type="range" min="0" max="100" step="1" value="22"></label>
