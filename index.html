@@ -2337,12 +2337,13 @@ function zoneBlockType(b) {
 }
 function zoneSpan(b, type) {
   const base = b * ZONE_PERIOD;
-  if (mixCustom && type === 'coast') return { s0: base, s1: base + ZONE_PERIOD };
   const margin = ZONE_PERIOD * 0.25;
-  const len = type === 'city' ? lerp(320, 480, hash2(b + WORLD_SEED, 401))
+  const room = ZONE_PERIOD - margin * 2; // 양 끝 마진을 늘 남겨 블록 경계에서 구간이 맞닿지 않게 한다
+  const baseLen = type === 'city' ? lerp(320, 480, hash2(b + WORLD_SEED, 401))
     : lerp(70, 110, hash2(b + WORLD_SEED, 401));
-  const room = ZONE_PERIOD - margin * 2 - len;
-  const s0 = base + margin + hash2(b + WORLD_SEED, 433) * Math.max(0, room);
+  // 커스텀 믹스에서는 비율이 높을수록 구간이 그만큼 길게 이어져야 슬라이더가 체감된다.
+  const len = mixCustom ? lerp(baseLen, room, clamp((MIX[type] || 0) / 100, 0, 1)) : baseLen;
+  const s0 = base + margin + hash2(b + WORLD_SEED, 433) * Math.max(0, room - len);
   return { s0, s1: s0 + len };
 }
 function zoneAt(s) {
@@ -5173,6 +5174,34 @@ function drawMapStrip() {
   const stats = document.getElementById('mpStats');
   if (stats) stats.textContent = '앞 8km · ' + MIX_KEYS.map((k, i) => labels[k] + ' ' + rounded[i] + '%').join(' · ');
 }
+// 리로드 없이 그 자리에서 다시 생성: 믹스/복잡도만 바뀌고 시드는 그대로라
+// 도로 중심선·세그먼트·식생 풀을 전부 비우고 같은 규칙으로 다시 쌓으면 된다.
+function regenerateWorld(mix, complex) {
+  MIX = { ...mix };
+  mixCustom = !(MIX.mountain === 50 && MIX.coast === 22 && MIX.city === 16 && MIX.river === 12);
+  COMPLEX = complex;
+  complexMul = COMPLEX <= 50 ? lerp(0.35, 1, COMPLEX / 50) : lerp(1, 1.7, (COMPLEX - 50) / 50);
+
+  for (const seg of segments.values()) removeSegment(seg);
+  segments.clear();
+  roadSamples.length = 0;
+  baseS = 0; genS = 0; lastX = 0; lastZ = 0;
+  roadSamples.push({ x: 0, z: 0, y: roadYAt(0), h: headingAt(0) });
+  genTo(PREVIEW_SPAN);
+
+  ensureSegments();
+  drawMapStrip();
+}
+let regenPending = false, regenQueued = null;
+function scheduleRegen(mix, complex) {
+  regenQueued = { mix, complex };
+  if (regenPending) return;
+  regenPending = true;
+  requestAnimationFrame(() => {
+    regenPending = false;
+    regenerateWorld(regenQueued.mix, regenQueued.complex);
+  });
+}
 function setupMapPicker() {
   const card = document.getElementById('mapPick');
   if (!card) return;
@@ -5195,12 +5224,11 @@ function setupMapPicker() {
     if (skipKey !== 'complex') document.getElementById('mpComplex').value = complex;
     document.getElementById('mpComplexOut').textContent = String(complex);
   };
-  const reloadSame = () => {
-    const mix = readMix();
+  // URL은 새로고침 없이 history로만 맞춰 둬서, 지금 보는 조합을 그대로 공유/새로고침할 수 있게 한다.
+  const syncUrl = () => {
     const complex = clamp(Math.round(+document.getElementById('mpComplex').value), 0, 100);
-    const same = MIX_KEYS.every(k => mix[k] === MIX[k]) && complex === COMPLEX;
-    if (same) return;
-    assignMapQuery(mapQuery({ seed: WORLD_SEED, mix, complex, drive: false }));
+    const q = mapQuery({ seed: WORLD_SEED, mix: readMix(), complex, drive: false });
+    history.replaceState(null, '', mapUrl(q));
   };
   showMix(MIX, COMPLEX);
   drawMapStrip();
@@ -5219,12 +5247,20 @@ function setupMapPicker() {
   mapCanvas.addEventListener('pointermove', e => { if (mapCanvas.hasPointerCapture(e.pointerId)) seekStrip(e); });
   for (const k of MIX_KEYS) {
     const el = document.getElementById(sliderId[k]);
-    el.addEventListener('input', () => showMix(balanceMix(readMix(), k, +el.value), +document.getElementById('mpComplex').value, k));
-    el.addEventListener('change', reloadSame);
+    el.addEventListener('input', () => {
+      const complex = +document.getElementById('mpComplex').value;
+      const mix = balanceMix(readMix(), k, +el.value);
+      showMix(mix, complex, k);
+      scheduleRegen(mix, clamp(Math.round(complex), 0, 100));
+    });
+    el.addEventListener('change', syncUrl);
   }
   const complexEl = document.getElementById('mpComplex');
-  complexEl.addEventListener('input', () => { document.getElementById('mpComplexOut').textContent = complexEl.value; });
-  complexEl.addEventListener('change', reloadSame);
+  complexEl.addEventListener('input', () => {
+    document.getElementById('mpComplexOut').textContent = complexEl.value;
+    scheduleRegen(readMix(), clamp(Math.round(+complexEl.value), 0, 100));
+  });
+  complexEl.addEventListener('change', syncUrl);
   document.getElementById('mpReroll').onclick = () => {
     let seed = Math.floor(Math.random() * 1000000);
     if (seed === WORLD_SEED) seed = (seed + 1) % 1000000;
