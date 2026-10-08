@@ -3209,15 +3209,16 @@ addEventListener('keydown', e => {
 });
 addEventListener('pointerdown', initAudio);
 addEventListener('keyup', e => { const k = KEYMAP[e.code]; if (k) key[k] = false; });
-addEventListener('blur', () => { for (const k in key) key[k] = false; touchSteer = 0; });
+addEventListener('blur', () => { for (const k in key) key[k] = false; touchSteer = 0; touchGas = 0; touchBrake = 0; });
 
 /* ---------------- 터치 컨트롤(모바일) ---------------- */
 let touchSteer = 0; // 조이스틱 아날로그 조향(-1 좌 ~ 1 우)
+let touchGas = 0, touchBrake = 0; // 조이스틱 아날로그 가속/제동(0~1)
 const isTouch = matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
 if (isTouch) {
   document.body.classList.add('touch');
   const hint = document.getElementById('hint');
-  if (hint) hint.textContent = '조이스틱 조향 · GAS/BRAKE 가속·제동 · P 핸드브레이크 · 상단 아이콘 시점/날씨/소리';
+  if (hint) hint.textContent = '조이스틱으로 조향·가속·제동 · P 핸드브레이크 · 상단 아이콘 시점/날씨/소리';
 
   const bindHold = (id, k) => {
     const el = document.getElementById(id);
@@ -3247,7 +3248,7 @@ if (isTouch) {
     const RADIUS = 36;
     let joyPid = null;
     const setKnob = (dx, dy) => { joyKnob.style.transform = `translate(${dx}px, ${dy}px)`; };
-    const resetJoy = () => { touchSteer = 0; setKnob(0, 0); joyBase.classList.remove('active'); joyPid = null; };
+    const resetJoy = () => { touchSteer = 0; touchGas = 0; touchBrake = 0; setKnob(0, 0); joyBase.classList.remove('active'); joyPid = null; };
     const moveJoy = (clientX, clientY) => {
       const r = joyBase.getBoundingClientRect();
       const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
@@ -3256,6 +3257,9 @@ if (isTouch) {
       if (len > RADIUS) { dx = dx / len * RADIUS; dy = dy / len * RADIUS; }
       setKnob(dx, dy);
       touchSteer = Math.max(-1, Math.min(1, -dx / RADIUS));
+      const ny = Math.max(-1, Math.min(1, -dy / RADIUS)); // 위로 당기면 +(가속), 아래면 -(제동)
+      touchGas = Math.max(0, ny);
+      touchBrake = Math.max(0, -ny);
     };
     joyBase.addEventListener('pointerdown', e => {
       e.preventDefault(); initAudio(); joyPid = e.pointerId; joyBase.classList.add('active');
@@ -3278,7 +3282,7 @@ const PHYS = { engine: 13.0, brake: 17.0, revAccel: 6.0, revMax: 9.0, dragQ: 0.0
 
 function updateVehicle(dt) {
   const c = car, P = PHYS;
-  let thr = key.w ? 1 : 0, brk = key.s ? 1 : 0;
+  let thr = Math.max(key.w ? 1 : 0, touchGas), brk = Math.max(key.s ? 1 : 0, touchBrake);
   let sIn = Math.max(-1, Math.min(1, (key.a ? 1 : 0) - (key.d ? 1 : 0) + touchSteer));
   if (demo || auto24) { const d = demoDrive(); thr = d[0]; brk = d[1]; sIn = d[2]; }
 
