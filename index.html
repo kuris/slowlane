@@ -2036,10 +2036,47 @@ const NATURAL_WEATHER = {
 // 첫 900m: 낮은 구릉의 리듬. 해안 형상은 계절과 무관해 전환 중에도 연속적이다.
 const scenicBlend = s => 1 - sstep(900, 1200, s);
 const showcaseAmount = s => 1 - sstep(1200, 1800, s);
-const coastAmount = s => RUN.get('coast') === '1' ? 1 : lerp(
-  sstep(0.30, 0.61, fbm(s * 0.0011 + WORLD_SEED % 1000, 7.3)), 1, showcaseAmount(s));
+const coastAmount = s => (RUN.get('coast') === '1' ? 1 : lerp(
+  sstep(0.30, 0.61, fbm(s * 0.0011 + WORLD_SEED % 1000, 7.3)), 1, showcaseAmount(s)))
+  * (1 - cityAmount(s)) * (1 - riverAmount(s));
 // 해안 방향을 거리 노이즈의 부호로 뒤집지 않는다: 절벽·수면·나무가 중간에 튀는 원인.
 const coastSide = s => 1;
+
+// --- 구간 스케줄러: 도시/강 랜드마크가 서로, 그리고 해안·쇼케이스 구간과 겹치지 않게 배치 ---
+const ZONE_START = 2200;
+const ZONE_PERIOD = 3000;
+function zoneBlockType(b) {
+  const r = hash2(b + WORLD_SEED, 311);
+  return r < 0.22 ? 'city' : r < 0.40 ? 'river' : 'none';
+}
+function zoneSpan(b, type) {
+  const base = b * ZONE_PERIOD;
+  const margin = ZONE_PERIOD * 0.25;
+  const len = type === 'city' ? lerp(320, 480, hash2(b + WORLD_SEED, 401))
+    : lerp(70, 110, hash2(b + WORLD_SEED, 401));
+  const room = ZONE_PERIOD - margin * 2 - len;
+  const s0 = base + margin + hash2(b + WORLD_SEED, 433) * Math.max(0, room);
+  return { s0, s1: s0 + len };
+}
+function zoneAt(s) {
+  if (s < ZONE_START) return null;
+  const b = Math.floor(s / ZONE_PERIOD);
+  const type = zoneBlockType(b);
+  if (type === 'none') return null;
+  const span = zoneSpan(b, type);
+  return { type, s0: span.s0, s1: span.s1 };
+}
+const cityAmount = s => {
+  const z = zoneAt(s);
+  if (!z || z.type !== 'city') return 0;
+  return sstep(z.s0, z.s0 + 50, s) * (1 - sstep(z.s1 - 50, z.s1, s));
+};
+const riverAmount = s => {
+  const z = zoneAt(s);
+  if (!z || z.type !== 'river') return 0;
+  return sstep(z.s0, z.s0 + 18, s) * (1 - sstep(z.s1 - 18, z.s1, s));
+};
+
 const summerVisual = () => seasonTransition
   ? lerp(seasonTransition.from === 'summer' ? 1 : 0, seasonTransition.to === 'summer' ? 1 : 0, seasonTransition.blend)
   : season === 'summer' ? 1 : 0;
@@ -2403,6 +2440,20 @@ function groundY(s, lat) {
   const beach = lerp(shelf, -24.05, sstep(22, 35, a));
   const seabed = lerp(beach, -30.5, sstep(35, 68, a));
   h = lerp(h, seabed, coastal * sstep(6.4, 11.5, a));
+  // 도시 구간: 도로 근처를 광장/거리 높이로 평탄화
+  const city = cityAmount(s);
+  if (city > 0.001) {
+    const cityFlat = sampleAt(s).y - 0.06;
+    const cityBelt = 1 - sstep(60, 90, a);
+    h = lerp(h, cityFlat, city * cityBelt);
+  }
+  // 강 구간: 도로 양옆 전체 폭에서 수면 높이까지 내려가는 계곡(다리 상판은 roadYAt로 별도 유지)
+  const river = riverAmount(s);
+  if (river > 0.001) {
+    const bedY = Math.min(SEA_LEVEL, sampleAt(s).y - 8);
+    const bank = lerp(bedY, h, sstep(8, 70, a));
+    h = lerp(h, bank, river);
+  }
   return h;
 }
 // 눈 버텍스 컬러: 순백이 아닌 블루/그레이가 섞인 흰색
@@ -2673,7 +2724,24 @@ function buildPalmGeo() {
   }
   return mergePlantParts(parts);
 }
-const plantGeometries = [buildBareGeo(0), buildBareGeo(1), buildBareGeo(2), buildConiferGeo(0), buildConiferGeo(1), buildBareGeo(0, true), buildBareGeo(1, true), buildSnowRockGeo(), buildPalmGeo()];
+// 도시 건물: 단순 박스 벽 + 얇은 지붕 캡. 인스턴스 컬러가 전체에 곱해져 지붕은 벽보다 자동으로 어두워짐.
+function buildBoxBuildingGeo() {
+  const wall = new THREE.BoxGeometry(1, 1, 1); wall.translate(0, 0.5, 0);
+  colorize(wall, 1, 1, 1);
+  const roof = new THREE.BoxGeometry(1.08, 0.05, 1.08); roof.translate(0, 1.025, 0);
+  colorize(roof, 0.60, 0.62, 0.66);
+  return mergeGeometries([wall, roof]);
+}
+function buildTowerBuildingGeo() {
+  const base = new THREE.BoxGeometry(1, 0.62, 1); base.translate(0, 0.31, 0);
+  colorize(base, 1, 1, 1);
+  const upper = new THREE.BoxGeometry(0.62, 0.38, 0.62); upper.translate(0, 0.81, 0);
+  colorize(upper, 1, 1, 1);
+  const roof = new THREE.BoxGeometry(0.67, 0.05, 0.67); roof.translate(0, 1.025, 0);
+  colorize(roof, 0.60, 0.62, 0.66);
+  return mergeGeometries([base, upper, roof]);
+}
+const plantGeometries = [buildBareGeo(0), buildBareGeo(1), buildBareGeo(2), buildConiferGeo(0), buildConiferGeo(1), buildBareGeo(0, true), buildBareGeo(1, true), buildSnowRockGeo(), buildPalmGeo(), buildBoxBuildingGeo(), buildTowerBuildingGeo()];
 // 가드레일: 회색 레일 + 위에 얹은 눈층을 하나로 합침
 function buildRailBandGeo() {
   const rail = new THREE.BoxGeometry(0.12, 0.28, 2.3); rail.translate(0, 0.55, 0);
@@ -2695,9 +2763,17 @@ function buildReflectorGeo() {
   return mergeGeometries([post, band]);
 }
 const reflGeo = buildReflectorGeo();
+// 다리 교각: 상판 바로 아래(y=0)에서 강바닥까지(y=-1) 뻗는 단순 콘크리트 기둥
+function buildPierGeo() {
+  const pier = new THREE.BoxGeometry(1, 1, 1); pier.translate(0, -0.5, 0);
+  colorize(pier, 0.55, 0.55, 0.57);
+  return pier;
+}
+const pierGeo = buildPierGeo();
+const pierMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95 });
 
 /* ---------------- InstancedMesh 풀 ---------------- */
-const TREE_CAP = 720, RAIL_CAP = 300, POST_CAP = 150, REFL_CAP = 90;
+const TREE_CAP = 720, RAIL_CAP = 300, POST_CAP = 150, REFL_CAP = 90, PIER_CAP = 36;
 function makeInst(geo, mat, cap) {
   const m = new THREE.InstancedMesh(geo, mat, cap);
   m.frustumCulled = false;
@@ -2707,13 +2783,15 @@ function makeInst(geo, mat, cap) {
   return m;
 }
 const plantPools = plantGeometries.map((geo, kind) => {
-  const mesh = makeInst(geo, trunkMat, kind < 5 ? 200 : kind < 7 ? 300 : 100);
+  const mesh = makeInst(geo, trunkMat, kind < 5 ? 200 : kind < 7 ? 300 : kind < 9 ? 100 : kind === 9 ? 140 : 70);
   mesh.count = 0; mesh.receiveShadow = true;
   return mesh;
 });
 const bandMesh = makeInst(railBandGeo, railMat, RAIL_CAP);
 const postMesh = makeInst(railPostGeo, railMat, POST_CAP);
 const reflMesh = makeInst(reflGeo, reflMat, REFL_CAP);
+const pierMesh = makeInst(pierGeo, pierMat, PIER_CAP);
+pierMesh.receiveShadow = true;
 
 const UP = new THREE.Vector3(0, 1, 0);
 const _m4 = new THREE.Matrix4(), _q = new THREE.Quaternion(), _p = new THREE.Vector3(), _s = new THREE.Vector3(1, 1, 1), _c = new THREE.Color();
@@ -2721,7 +2799,7 @@ const activeTrees = []; // 충돌 판정용
 let dirtyPools = true;
 
 function rebuildPools() {
-  let nT = 0, nB = 0, nP = 0, nR = 0;
+  let nT = 0, nB = 0, nP = 0, nR = 0, nPier = 0;
   const plantCounts = plantPools.map(() => 0);
   activeTrees.length = 0;
   // 풀이 가득 차도 차량 근처의 군집을 우선해 눈앞의 식생이 사라지지 않게 한다.
@@ -2734,7 +2812,8 @@ function rebuildPools() {
       _p.set(t.x, t.y, t.z); _s.set(t.s * t.width, t.s, t.s * t.width);
       _m4.compose(_p, _q, _s);
       pool.setMatrixAt(index, _m4);
-      _c.setRGB(0.92 + t.tint * 0.08, 0.95 + t.tint * 0.05, 1);
+      if (t.kind >= 9) _c.setHSL(t.tint, lerp(0.15, 0.35, (t.tint * 7) % 1), lerp(0.55, 0.82, (t.tint * 13) % 1));
+      else _c.setRGB(0.92 + t.tint * 0.08, 0.95 + t.tint * 0.05, 1);
       pool.setColorAt(index, _c);
       plantCounts[t.kind]++;
       if (t.kind < 5) {
@@ -2763,15 +2842,23 @@ function rebuildPools() {
       _m4.compose(_p, _q, _s);
       reflMesh.setMatrixAt(nR, _m4); nR++;
     }
+    for (const p of seg.piers) {
+      if (nPier >= PIER_CAP) break;
+      _q.identity();
+      _p.set(p.x, p.y, p.z); _s.set(1, p.height, 1);
+      _m4.compose(_p, _q, _s);
+      pierMesh.setMatrixAt(nPier, _m4); nPier++;
+    }
   }
   plantPools.forEach((pool, kind) => {
     pool.count = plantCounts[kind]; pool.instanceMatrix.needsUpdate = true;
     if (pool.instanceColor) pool.instanceColor.needsUpdate = true;
   });
-  bandMesh.count = nB; postMesh.count = nP; reflMesh.count = nR;
+  bandMesh.count = nB; postMesh.count = nP; reflMesh.count = nR; pierMesh.count = nPier;
   bandMesh.instanceMatrix.needsUpdate = true;
   postMesh.instanceMatrix.needsUpdate = true;
   reflMesh.instanceMatrix.needsUpdate = true;
+  pierMesh.instanceMatrix.needsUpdate = true;
 }
 
 /* ---------------- 세그먼트 추가/제거 ---------------- */
@@ -2779,11 +2866,16 @@ const segments = new Map(); // index → 세그먼트 데이터
 function placeScenery(seg, s, lat, kind, id) {
   const r = sampleAt(s), x = r.x + r.rx * lat, z = r.z + r.rz * lat;
   // 굽은 도로의 다른 부분도 확인한다. 가지·눈 덩어리까지 도로 밖에 남긴다.
-  const scale = kind < 3 ? lerp(0.95, 1.65, hash2(id, 111))
+  const isBuilding = kind >= 9;
+  // 건물은 scale/width를 작은 배율이 아니라 "실제 미터" 단위로 써서 높이·바닥면적을 직접 지정한다.
+  const footprintM = isBuilding ? lerp(7, 16, hash2(id, 119)) : 0;
+  const scale = isBuilding ? (kind === 9 ? lerp(7, 18, hash2(id, 113)) : lerp(10, 28, hash2(id, 113)))
+    : kind < 3 ? lerp(0.95, 1.65, hash2(id, 111))
     : kind < 5 ? lerp(0.8, 1.45, hash2(id, 113))
     : kind < 7 ? lerp(0.65, 1.3, hash2(id, 115)) : lerp(0.55, 1.1, hash2(id, 117));
-  const width = lerp(0.82, 1.18, hash2(id, 119));
-  const crown = (kind === 8 ? 3.2 : kind < 3 ? 3.4 : kind < 5 ? 2.4 : 1.1) * scale * width;
+  const width = isBuilding ? footprintM / scale : lerp(0.82, 1.18, hash2(id, 119));
+  const crown = isBuilding ? footprintM * 0.6 + 5.6
+    : (kind === 8 ? 3.2 : kind < 3 ? 3.4 : kind < 5 ? 2.4 : 1.1) * scale * width;
   for (let j = Math.max(0, Math.floor(s - baseS - 140)); j < Math.min(roadSamples.length, s - baseS + 140); j += 3) {
     const p = roadSamples[j];
     if (Math.hypot(x - p.x, z - p.z) < 5.6 + crown) return;
@@ -2803,7 +2895,7 @@ function placeScenery(seg, s, lat, kind, id) {
 }
 function addSegment(i) {
   const s0 = i * SEG, s1 = s0 + SEG;
-  const seg = { trees: [], bands: [], posts: [], refls: [] };
+  const seg = { trees: [], bands: [], posts: [], refls: [], piers: [] };
 
   const roadMesh = new THREE.Mesh(buildRoadGeo(s0, s1), roadMat);
   roadMesh.receiveShadow = true;
@@ -2818,6 +2910,7 @@ function addSegment(i) {
   // 0~900m: 가까운 앙상한 나무 → 중경 침엽수 군집 → 열린 설원으로 리듬을 만든다.
   // 격자 간격은 후보 생성용일 뿐, 실제 좌표는 군집 중심에 독립적으로 흩어진다.
   for (const side of [-1, 1]) {
+    if (cityAmount(s0) > 0.5) continue; // 도시 구간에는 유기적 식생 군집을 생성하지 않는다
     const patch = vnoise(s0 * 0.018 + WORLD_SEED % 97, side * 17.3);
     const clusterLat = side * lerp(14, 55, hash2(i + WORLD_SEED, side * 29));
     const meadow = Math.pow(0.5 + 0.5 * Math.sin(s0 * 0.017 + side * 1.8), 4);
@@ -2853,9 +2946,36 @@ function addSegment(i) {
     }
   }
 
-  // 가드레일(우측, 구간별)
+  // 도시 구간: 좌우 3열의 느슨한 격자로 건물 배치(유기적 군집이 아니라 '블록'처럼 보이게)
+  if (cityAmount(s0) > 0.5) {
+    for (const side of [-1, 1]) {
+      for (let row = 0; row < 3; row++) {
+        const rowLat = 9 + row * 11;
+        for (let s = s0 + 2; s < s1; s += 16) {
+          const id = i * 97 + side * 131 + row * 13 + Math.floor(s) + WORLD_SEED % 2017;
+          const jitterLat = (hash2(id, 211) - 0.5) * 6;
+          const jitterS = (hash2(id, 223) - 0.5) * 6;
+          const kind = hash2(id, 227) < 0.75 ? 9 : 10;
+          placeScenery(seg, s + jitterS, side * (rowLat + jitterLat), kind, id);
+        }
+      }
+    }
+  }
+
+  // 강 구간: 다리 상판 아래 교각(장식용, 차량과 충돌하지 않음)
+  for (let s = s0; s < s1; s += 10) {
+    if (riverAmount(s) < 0.5) continue;
+    const r = sampleAt(s), deckY = r.y - 0.06, bedY = Math.min(SEA_LEVEL, r.y - 8);
+    for (const side of [-1, 1]) {
+      const lat = side * 3.6;
+      seg.piers.push({ x: r.x + r.rx * lat, y: deckY, z: r.z + r.rz * lat, height: deckY - bedY });
+    }
+  }
+
+  // 가드레일(우측, 구간별 · 도시에서는 생략, 다리 구간은 강제 표시)
   for (let s = s0; s < s1; s += 2) {
-    if (!railActive(s)) continue;
+    if (cityAmount(s) > 0.5) continue;
+    if (!railActive(s) && riverAmount(s) < 0.5) continue;
     const r = sampleAt(s), lat = 4.75;
     const x = r.x + r.rx * lat, z = r.z + r.rz * lat;
     const y = r.y - 0.06;
@@ -2865,6 +2985,7 @@ function addSegment(i) {
 
   // 시선유도봉(커브 바깥쪽)
   for (let s = s0 + 4; s < s1; s += 8) {
+    if (cityAmount(s) > 0.5) continue;
     const curv = (headingAt(s + 2) - headingAt(s - 2)) / 4;
     if (Math.abs(curv) < 0.0045 || railActive(s)) continue;
     const side = curv > 0 ? 1 : -1;
@@ -4099,7 +4220,8 @@ function setSeasonImmediate(name) {
   PAL.dayTop.setHex(palette.sky);
   PAL.dayHor.setHex(name === 'winter' ? 0xc8d9e6 : name === 'autumn' ? 0xd6d0bc : name === 'summer' ? 0xf3dfbc : 0xc4d9df);
   const fresh = [buildBareGeo(0),buildBareGeo(1),buildBareGeo(2),buildConiferGeo(0),buildConiferGeo(1),buildBareGeo(0,true),buildBareGeo(1,true),buildSnowRockGeo(),buildPalmGeo()];
-  plantPools.forEach((pool,i)=>{ pool.geometry.dispose(); pool.geometry=fresh[i]; });
+  // 건물(kind 9, 10)은 계절과 무관해 fresh에 포함하지 않는다 — 기존 지오메트리를 그대로 둔다.
+  plantPools.forEach((pool,i)=>{ if (i >= fresh.length) return; pool.geometry.dispose(); pool.geometry=fresh[i]; });
   bandMesh.geometry.dispose(); bandMesh.geometry=buildRailBandGeo();
   for (const [s,seg] of segments) {
     seg.terMesh.geometry.dispose(); seg.terMesh.geometry=buildTerrainGeo(s*SEG);
