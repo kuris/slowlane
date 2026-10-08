@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+<title>FROSTLINE — 겨울 산길 드라이빙</title>
+<style>
+/*__CSS__*/
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
+  }
+}
+</script>
+<script>
+// 부트 가드: 모듈 로딩 실패(오프라인 등) 시 화면에 안내
+window.__booted = false;
+window.addEventListener('error', function (e) {
+  var el = document.getElementById('error');
+  if (el) { el.style.display = 'block'; el.textContent += ((e && e.message) || e) + '\n'; }
+});
+window.addEventListener('unhandledrejection', function (e) {
+  var el = document.getElementById('error');
+  if (el) { el.style.display = 'block'; el.textContent += ((e && e.reason) || e) + '\n'; }
+});
+setTimeout(function () {
+  if (!window.__booted) {
+    var el = document.getElementById('error');
+    if (el) { el.style.display = 'block'; el.textContent += 'Three.js 모듈을 불러오지 못했습니다. 네트워크 연결 상태를 확인해 주세요.\n'; }
+  }
+}, 8000);
+</script>
+</head>
+<body>
+<div id="app"></div>
+<canvas id="wscan" aria-hidden="true" style="position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:2"></canvas>
+<div id="vignette"></div>
+<div id="crtOverlay" aria-hidden="true"></div>
+<div id="error"></div>
+<div class="hud" id="title">FROSTLINE<small>겨울 산길 드라이빙 · MVP</small><small class="credit">Car · Khronos ToyCar (CC0) &nbsp;/&nbsp; 식생 · 절차적 가지 지오메트리 · Terrain · Isaac Sukin (MIT)</small><small class="credit">엔진 녹음 · qubodup · CC BY 3.0 · 반복 경계 혼합 및 속도 조절</small></div>
+<div class="hud" id="speed"><div class="val" id="speedVal">0</div><div class="unit">KM/H</div></div>
+<div class="hud" id="dist"><span class="lbl">주행 거리</span><span id="distVal">0.00 km</span></div>
+<div class="hud" id="clock">10:30</div>
+<div class="hud" id="roadState">노면 건조</div>
+<div class="hud" id="hint">W 가속&nbsp;&nbsp;·&nbsp;&nbsp;S 브레이크/후진&nbsp;&nbsp;·&nbsp;&nbsp;A/D 조향&nbsp;&nbsp;·&nbsp;&nbsp;Space 핸드브레이크&nbsp;&nbsp;·&nbsp;&nbsp;R 도로 복귀&nbsp;&nbsp;·&nbsp;&nbsp;C 시점&nbsp;&nbsp;·&nbsp;&nbsp;N 날씨&nbsp;&nbsp;·&nbsp;&nbsp;M 소리&nbsp;&nbsp;·&nbsp;&nbsp;T 자율주행</div>
+<script type="module">
+//__JS__
+</script>
+
+<div id="cinemaFade" aria-hidden="true"></div>
+<button id="exitCinema" type="button">감상 종료 · Esc</button>
+<button id="bStartMusic" type="button" style="position:fixed;top:18px;right:18px;z-index:30;padding:12px 18px;border:1px solid #b5cdec;border-radius:8px;background:#142431;color:#fff;cursor:pointer">▶ 전체 소리 켜기 · 눌러서 시작</button>
+<div id="flash"></div>
+<div id="camToast"></div>
+<div id="wpanel" style="display:none">
+  <div class="wp-title">계절·날씨 설정 <span>(N 토글)</span></div>
+  <button id="bCoast" type="button">여름 해안 드라이브</button>
+  <button id="bCinema" type="button" style="width:100%;margin-bottom:8px">시네마틱 자동 감상 · V</button>
+  <button id="bCRT" type="button" aria-pressed="false">90년대 브라운관 필터 · 꺼짐</button>
+  <button id="bNature" type="button" style="width:100%;margin-bottom:8px">자동 풍경 순환</button>
+  <div style="font-size:10px;opacity:.7;margin-bottom:10px">낮·밤 → 이틀마다 다음 계절 · 날씨는 서서히 변화<br>시간 흐름 슬라이더로 순환 속도 조절</div>
+  <div class="wp-row" id="seasonControls"><button data-season="spring">봄</button><button data-season="summer">여름</button><button data-season="autumn">가을</button><button data-season="winter">겨울</button></div>
+  <div style="font-size:10px;line-height:1.6;margin-bottom:8px"><a href="https://opengameart.org/content/car-engine-loop-96khz-4s" target="_blank" rel="noopener" style="color:#b5cdec">엔진 녹음: qubodup</a> · <a href="http://creativecommons.org/licenses/by/3.0/" target="_blank" rel="noopener" style="color:#b5cdec">CC BY 3.0</a></div>
+  <div class="wp-row">
+    <button data-w="clear">맑음</button><button data-w="snow">눈</button><button data-w="drizzle">이슬비</button><button data-w="rain">비</button><button data-w="storm">폭풍우</button><button id="bAuto">24h 자율주행</button>
+  </div>
+  <label>강수량 <input id="sPrecip" type="range" min="0" max="100" value="0"></label>
+  <label>바람 <input id="sWind" type="range" min="0" max="100" value="15"></label>
+  <label>안개 <input id="sFog" type="range" min="0" max="100" value="0"></label>
+  <label>어둡기 <input id="sDark" type="range" min="0" max="100" value="0"></label>
+  <label>시간대 <input id="sTime" type="range" min="0" max="24" step="0.1" value="10.5"></label>
+  <div style="margin-top:12px;font-size:10px;line-height:1.6"><button id="bMusic" type="button">음악 켜짐</button>
+    <label for="sTrack">드라이브 음악</label>
+    <select id="sTrack"><option value="jazz">잔잔한 재즈 · Backbay Lounge</option><option value="bossa">해안 보사노바 · Bossa Antigua</option></select>
+    <a id="musicCredit" href="https://incompetech.com/music/royalty-free/index.html?isrc=USUAN1700068&amp;Search=Search" target="_blank" rel="noopener" style="color:#b5cdec">Backbay Lounge — Kevin MacLeod (incompetech.com)</a><br>배경음악 · <a href="http://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener" style="color:#b5cdec">CC BY 4.0</a> · 원본 음원 사용</div>
+  <label>음악 음량 <input id="sMusic" type="range" min="0" max="100" value="32"></label>
+  <label for="sEngine">엔진 음량 · <output id="engineVolumeValue" for="sEngine">100%</output></label>
+  <input id="sEngine" aria-label="엔진 음량" type="range" min="0" max="100" value="100">
+  <label>시간 흐름(배속) <input id="sFlow" type="range" min="0" max="100" value="0"></label>
+</div>
+
+<div id="touchControls" aria-hidden="true">
+  <div class="tc-top">
+    <button id="tcCam" class="tc-btn tc-icon" type="button" aria-label="시점 전환">⟳</button>
+    <button id="tcWeather" class="tc-btn tc-icon" type="button" aria-label="날씨 설정">☁</button>
+    <button id="tcMute" class="tc-btn tc-icon" type="button" aria-label="소리 켜기/끄기">♪</button>
+  </div>
+  <div id="tcJoyBase" class="tc-joy-base" aria-label="조향 조이스틱">
+    <div id="tcJoyKnob" class="tc-joy-knob"></div>
+  </div>
+  <button id="tcHandbrake" class="tc-btn tc-hb" type="button" aria-label="핸드브레이크">P</button>
+  <div class="tc-right">
+    <button id="tcGas" class="tc-btn tc-pedal tc-gas" type="button" aria-label="가속">▲</button>
+    <button id="tcBrake" class="tc-btn tc-pedal tc-brake" type="button" aria-label="브레이크 · 후진">▼</button>
+  </div>
+</div>
+</body>
+</html>
