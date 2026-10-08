@@ -21,6 +21,9 @@
   try {
     if (window.matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0)
       document.documentElement.classList.add('touch');
+    var q = new URLSearchParams(location.search);
+    if (!q.has('drive') && !q.has('demo') && !q.has('startS'))
+      document.documentElement.classList.add('map-preview');
   } catch (e) {}
 })();
 </script>
@@ -91,6 +94,26 @@ setTimeout(function () {
   <label>시간 흐름(배속) <input id="sFlow" type="range" min="0" max="100" value="0"></label>
 </div>
 
+<div id="mapPick" hidden>
+  <div class="mp-card">
+    <div class="mp-title">지형 고르기</div>
+    <div class="mp-seed">시드 <span id="mpSeed"></span></div>
+    <canvas id="mpMap" width="640" height="96"></canvas>
+    <div id="mpStats"></div>
+    <p class="mp-note">기본값은 지금의 초반 해안 도로를 유지합니다. 비율을 움직이면 처음부터 그 비율로 나뉩니다.</p>
+    <div class="mp-grid">
+      <label>산길 <output id="mpMountainOut">50%</output><input id="mpMountain" type="range" min="0" max="100" step="1" value="50"></label>
+      <label>해안 <output id="mpCoastOut">22%</output><input id="mpCoast" type="range" min="0" max="100" step="1" value="22"></label>
+      <label>도시 <output id="mpCityOut">16%</output><input id="mpCity" type="range" min="0" max="100" step="1" value="16"></label>
+      <label>강 <output id="mpRiverOut">12%</output><input id="mpRiver" type="range" min="0" max="100" step="1" value="12"></label>
+    </div>
+    <label class="mp-complex">길 복잡도 <output id="mpComplexOut">50</output><input id="mpComplex" type="range" min="0" max="100" step="1" value="50"></label>
+    <div class="mp-actions">
+      <button id="mpReroll" type="button">다른 지형</button>
+      <button id="mpDrive" type="button">이 길로 출발</button>
+    </div>
+  </div>
+</div>
 <div id="touchControls" aria-hidden="true">
   <div class="tc-top">
     <button id="tcCam" class="tc-btn tc-icon" type="button" aria-label="시점 전환">시점</button>

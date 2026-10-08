@@ -31,12 +31,26 @@ const NATURAL_WEATHER = {
  autumn: ['clear','drizzle','rain','clear'],
  winter: ['clear','snow','snow','clear']
 };
+// 비율을 안 건드리거나 50,22,16,12이면 지금 초반 해안과 2.2km 이후 배치를 유지한다.
+let mixCustom = false;
+let MIX = { mountain: 50, coast: 22, city: 16, river: 12 };
+let COMPLEX = 50;
+let complexMul = 1;
+let mapPreview = false;
 // 첫 900m: 낮은 구릉의 리듬. 해안 형상은 계절과 무관해 전환 중에도 연속적이다.
-const scenicBlend = s => 1 - sstep(900, 1200, s);
-const showcaseAmount = s => 1 - sstep(1200, 1800, s);
-const coastAmount = s => (RUN.get('coast') === '1' ? 1 : lerp(
-  sstep(0.30, 0.61, fbm(s * 0.0011 + WORLD_SEED % 1000, 7.3)), 1, showcaseAmount(s)))
-  * (1 - cityAmount(s)) * (1 - riverAmount(s));
+const scenicBlend = s => mixCustom ? 0 : 1 - sstep(900, 1200, s);
+const showcaseAmount = s => mixCustom ? 0 : 1 - sstep(1200, 1800, s);
+const coastZoneBlend = s => {
+  const z = zoneAt(s);
+  if (!z || z.type !== 'coast') return 0;
+  return sstep(z.s0, z.s0 + 40, s) * (1 - sstep(z.s1 - 40, z.s1, s));
+};
+const coastAmount = s => {
+  if (mixCustom) return coastZoneBlend(s);
+  return (RUN.get('coast') === '1' ? 1 : lerp(
+    sstep(0.30, 0.61, fbm(s * 0.0011 + WORLD_SEED % 1000, 7.3)), 1, showcaseAmount(s)))
+    * (1 - cityAmount(s)) * (1 - riverAmount(s));
+};
 // 해안 방향을 거리 노이즈의 부호로 뒤집지 않는다: 절벽·수면·나무가 중간에 튀는 원인.
 const coastSide = s => 1;
 
@@ -45,10 +59,16 @@ const ZONE_START = 2200;
 const ZONE_PERIOD = 3000;
 function zoneBlockType(b) {
   const r = hash2(b + WORLD_SEED, 311);
-  return r < 0.22 ? 'city' : r < 0.40 ? 'river' : 'none';
+  if (!mixCustom) return r < 0.22 ? 'city' : r < 0.40 ? 'river' : 'none';
+  const cuts = [MIX.mountain, MIX.mountain + MIX.coast, MIX.mountain + MIX.coast + MIX.city, 100];
+  const names = ['mountain', 'coast', 'city', 'river'];
+  const x = r * 100;
+  for (let i = 0; i < names.length; i++) if (x < cuts[i]) return names[i];
+  return 'river';
 }
 function zoneSpan(b, type) {
   const base = b * ZONE_PERIOD;
+  if (mixCustom) return { s0: base, s1: base + ZONE_PERIOD };
   const margin = ZONE_PERIOD * 0.25;
   const len = type === 'city' ? lerp(320, 480, hash2(b + WORLD_SEED, 401))
     : lerp(70, 110, hash2(b + WORLD_SEED, 401));
@@ -57,10 +77,10 @@ function zoneSpan(b, type) {
   return { s0, s1: s0 + len };
 }
 function zoneAt(s) {
-  if (s < ZONE_START) return null;
+  if (s < 0 || (!mixCustom && s < ZONE_START)) return null;
   const b = Math.floor(s / ZONE_PERIOD);
   const type = zoneBlockType(b);
-  if (type === 'none') return null;
+  if (type === 'none' || type === 'mountain') return null;
   const span = zoneSpan(b, type);
   return { type, s0: span.s0, s1: span.s1 };
 }
@@ -74,6 +94,17 @@ const riverAmount = s => {
   if (!z || z.type !== 'river') return 0;
   return sstep(z.s0, z.s0 + 18, s) * (1 - sstep(z.s1 - 18, z.s1, s));
 };
+function terrainKind(s) {
+  if (mixCustom) {
+    if (s < 0) return 'mountain';
+    const type = zoneBlockType(Math.floor(s / ZONE_PERIOD));
+    return type === 'none' ? 'mountain' : type;
+  }
+  if (cityAmount(s) > 0.45) return 'city';
+  if (riverAmount(s) > 0.45) return 'river';
+  if (coastAmount(s) > 0.45) return 'coast';
+  return 'mountain';
+}
 
 const summerVisual = () => seasonTransition
   ? lerp(seasonTransition.from === 'summer' ? 1 : 0, seasonTransition.to === 'summer' ? 1 : 0, seasonTransition.blend)
@@ -99,6 +130,35 @@ function fbm(x, y) {
   for (let i = 0; i < 4; i++) { f += amp * vnoise(x * fr, y * fr); fr *= 2.02; amp *= 0.5; }
   return f;
 }
+function parseMixParam(raw) {
+  const fallback = { mountain: 50, coast: 22, city: 16, river: 12, custom: false };
+  if (!raw) return fallback;
+  const parts = String(raw).split(',').map(Number);
+  if (parts.length !== 4 || parts.some(n => !Number.isFinite(n))) return fallback;
+  let vals = parts.map(n => clamp(Math.round(n), 0, 100));
+  const sum = vals.reduce((a, b) => a + b, 0);
+  if (sum <= 0) return fallback;
+  if (sum !== 100) {
+    const scaled = vals.map(v => Math.floor((v * 100) / sum));
+    const left = 100 - scaled.reduce((a, b) => a + b, 0);
+    const rank = vals.map((v, i) => ({ i, f: (v * 100) / sum - scaled[i] })).sort((a, b) => b.f - a.f || a.i - b.i);
+    for (let k = 0; k < left; k++) scaled[rank[k].i]++;
+    vals = scaled;
+  }
+  const custom = !(vals[0] === 50 && vals[1] === 22 && vals[2] === 16 && vals[3] === 12);
+  return { mountain: vals[0], coast: vals[1], city: vals[2], river: vals[3], custom };
+}
+{
+  const parsed = parseMixParam(RUN.get('mix'));
+  MIX = { mountain: parsed.mountain, coast: parsed.coast, city: parsed.city, river: parsed.river };
+  mixCustom = parsed.custom;
+  if (RUN.has('complex')) {
+    const n = Number(RUN.get('complex'));
+    if (Number.isFinite(n)) COMPLEX = clamp(Math.round(n), 0, 100);
+  }
+  complexMul = COMPLEX <= 50 ? lerp(0.35, 1, COMPLEX / 50) : lerp(1, 1.7, (COMPLEX - 50) / 50);
+}
+mapPreview = !RUN.has('drive') && !RUN.has('demo') && !RUN.has('startS');
 
 /* ---------------- 렌더러 / 씬 / 카메라 ---------------- */
 const app = document.getElementById('app');
@@ -386,16 +446,31 @@ const reflMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 
 /* ---------------- 도로 중심선: 헤딩 적분으로 만드는 무한 곡선 ---------------- */
 // 헤딩/높이를 s(주행거리)의 연속 함수로 정의 → 세그먼트가 자연스럽게 이어짐
 const headingAt = s => {
-  const opening = 1 - sstep(1200, 1800, s);
   const original = 0.72 * Math.sin(s * 0.0032 + WORLD_SEED % 19) + 0.42 * Math.sin(s * 0.0079 + 1.6) + 0.18 * Math.sin(s * 0.017 + 4.0) + 0.10 * Math.sin(s * 0.0011);
   // 넓은 해안 S자 도로. 짧은 주기의 급커브를 줄이고 같은 도로를 사계절 공유한다.
   const promenade = 0.46 * Math.sin(s * 0.0052) + 0.16 * Math.sin(s * 0.009 + 0.4);
-  return original * (1 - opening) + promenade * opening;
+  if (!mixCustom) {
+    const opening = 1 - sstep(1200, 1800, s);
+    return original * complexMul * (1 - opening) + promenade * opening;
+  }
+  const coast = coastZoneBlend(s);
+  const flat = Math.min(1, cityAmount(s) + riverAmount(s));
+  const coastW = coast * (1 - flat);
+  const mount = Math.max(0, 1 - coastW - flat);
+  return original * complexMul * mount + promenade * coastW + original * flat;
 };
 const roadYAt = s => {
-  const opening = 1 - sstep(1200, 1800, s);
   const original = 10.5 * Math.sin(s * 0.0019 + 0.8) + 5.2 * Math.sin(s * 0.0053 + WORLD_SEED % 13) + 1.6 * Math.sin(s * 0.012 + 2.1);
-  return lerp(original, -17.5 + 1.2 * Math.sin(s * 0.004) + 0.45 * Math.sin(s * 0.011), opening);
+  const coastalFlat = -17.5 + 1.2 * Math.sin(s * 0.004) + 0.45 * Math.sin(s * 0.011);
+  if (!mixCustom) {
+    const opening = 1 - sstep(1200, 1800, s);
+    return lerp(original * complexMul, coastalFlat, opening);
+  }
+  const coast = coastZoneBlend(s);
+  const flat = Math.min(1, cityAmount(s) + riverAmount(s));
+  const coastW = coast * (1 - flat);
+  const mount = Math.max(0, 1 - coastW - flat);
+  return original * complexMul * mount + coastalFlat * coastW + original * flat;
 };
 // 가드레일이 등장하는 구간(약 40%)
 const railActive = s => Math.sin(s * 0.0043 + 1.1) > 0.30;
@@ -433,16 +508,16 @@ function groundY(s, lat) {
   const m = sstep(7.2, 35, a);            // 도로 가장자리에서 연속적으로 올라오는 구릉
   const scenic = scenicBlend(s);
   const seedPhase = WORLD_SEED % 37;
-  const rolling = Math.sin(s * 0.013 + lat * 0.025 + seedPhase) * 4.8
-    + Math.sin(s * 0.006 - lat * 0.041 + 1.7) * 3.6;
-  h += lerp((fbm(s * 0.012, lat * 0.02) - 0.5) * 11, rolling, scenic) * m;
-  h += (fbm(s * 0.035 + 40, lat * 0.035 - 17) - 0.5) * lerp(1.5, 0.65, scenic) * m;
-  h += sstep(48, 185, a) * (12 + fbm(s * 0.006, lat * 0.009) * 19); // 뒤쪽의 넓은 사면
-  h -= scenic * sstep(25, 70, a) * (1 - sstep(95, 175, a)) * 4.5; // 낮은 중경 계곡
+  const rolling = (Math.sin(s * 0.013 + lat * 0.025 + seedPhase) * 4.8
+    + Math.sin(s * 0.006 - lat * 0.041 + 1.7) * 3.6) * complexMul;
+  h += lerp((fbm(s * 0.012, lat * 0.02) - 0.5) * 11 * complexMul, rolling, scenic) * m;
+  h += (fbm(s * 0.035 + 40, lat * 0.035 - 17) - 0.5) * lerp(1.5, 0.65, scenic) * complexMul * m;
+  h += sstep(48, 185, a) * (12 + fbm(s * 0.006, lat * 0.009) * 19) * complexMul; // 뒤쪽의 넓은 사면
+  h -= scenic * sstep(25, 70, a) * (1 - sstep(95, 175, a)) * 4.5 * complexMul; // 낮은 중경 계곡
   const opening = showcaseAmount(s);
   // 부드러운 육지 구릉은 낮게 유지해 운전석에서 수평선이 보이게 한다.
   const lowHills = sampleAt(s).y - 0.06 + sstep(7.2, 80, a) *
-    (3.5 + 2.2 * Math.sin(s * 0.009 + lat * 0.022) + 1.2 * Math.sin(s * 0.017 - lat * 0.03));
+    (3.5 + complexMul * (2.2 * Math.sin(s * 0.009 + lat * 0.022) + 1.2 * Math.sin(s * 0.017 - lat * 0.03)));
   h = lerp(h, lowHills, opening);
   const coastal = coastAmount(s) * (Math.sign(lat) === coastSide(s) ? 1 : 0);
   // 도로 → 잔디 어깨 → 모래 테라스 → 얕은 수심 → 바다. 도로와 같은 단면 좌표를 공유한다.
@@ -1557,6 +1632,12 @@ if (isTouch) {
   document.body.classList.add('touch');
   const touchRoot = document.getElementById('touchControls');
   if (touchRoot) touchRoot.setAttribute('aria-hidden', 'false');
+  if (mapPreview) {
+    for (const id of ['tcJoyBase', 'tcHandbrake', 'tcGas', 'tcBrake']) {
+      const el = document.getElementById(id);
+      if (el) el.setAttribute('aria-hidden', 'true');
+    }
+  }
   const hint = document.getElementById('hint');
   if (hint) hint.textContent = '조이스틱으로 조향·가속·제동 · P 핸드브레이크 · 상단 아이콘 시점/날씨/소리';
 
@@ -1831,6 +1912,17 @@ function updateCamera(dt, snap = false) {
     camera.position.x += (Math.random() - 0.5) * s;
     camera.position.y += (Math.random() - 0.5) * s;
   }
+}
+// 미리보기: 도로 전방 f = (-sin h, 0, -cos h). 카메라는 그 뒤 18m, 위 22m에서 80m 앞을 본다.
+function updatePreviewCamera() {
+  const s = car.s;
+  const anchor = sampleAt(s);
+  const ahead = sampleAt(s + 80);
+  const fx = -Math.sin(anchor.h), fz = -Math.cos(anchor.h);
+  camera.position.set(anchor.x - fx * 18, anchor.y + 22, anchor.z - fz * 18);
+  camera.up.set(0, 1, 0);
+  camera.lookAt(ahead.x, ahead.y + 1.6, ahead.z);
+  if (camera.fov !== 56) { camera.fov = 56; camera.updateProjectionMatrix(); }
 }
 
 /* ---------------- 하늘/산/태양이 카메라를 따라다님 ---------------- */
@@ -2420,8 +2512,10 @@ function thunder() {
 }
 
 /* 날씨 패널 연결 */
+let weatherName = 'clear';
 function setPreset(name) {
   const p = PRESETS[name]; if (!p) return;
+  weatherName = name;
   precipForm = p.form;
   Wui.precip = p.precip; Wui.wind = p.wind; Wui.fog = p.fog; Wui.dark = p.dark;
   const map = { sPrecip: 'precip', sWind: 'wind', sFog: 'fog', sDark: 'dark' };
@@ -2647,14 +2741,15 @@ const clock = new THREE.Clock();
 function frame() {
   requestAnimationFrame(frame);
   const dt = Math.min(clock.getDelta(), 0.05); // 탭 전환 등 긴 프레임 방지
-  updateVehicle(dt);
+  if (!mapPreview) updateVehicle(dt);
   ensureSegments();
   if (dirtyPools) { dirtyPools = false; rebuildPools(); } // GLB 로드 완료 등 풀 재구성 필요 시
   updateEffects(dt);
   updateNature(dt);
   updateSeason(dt);
   updateWeather(dt);
-  updateCamera(dt, snapNext);
+  if (mapPreview) updatePreviewCamera();
+  else updateCamera(dt, snapNext);
   snapNext = false;
   updateAnchors();
   updateHUD();
@@ -2670,9 +2765,168 @@ addEventListener('resize', () => {
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 });
 
+/* ---------------- 지형 고르기 ---------------- */
+const MIX_KEYS = ['mountain', 'coast', 'city', 'river'];
+function balanceMix(current, changed, value) {
+  const next = { ...current };
+  value = clamp(Math.round(value), 0, 100);
+  const rest = 100 - value;
+  const others = MIX_KEYS.filter(k => k !== changed);
+  const otherSum = others.reduce((sum, k) => sum + next[k], 0);
+  next[changed] = value;
+  if (otherSum <= 0) {
+    const base = Math.floor(rest / others.length);
+    let used = 0;
+    others.forEach((k, i) => {
+      if (i === others.length - 1) next[k] = rest - used;
+      else { next[k] = base; used += base; }
+    });
+  } else {
+    let used = 0;
+    others.forEach((k, i) => {
+      if (i === others.length - 1) next[k] = rest - used;
+      else {
+        next[k] = Math.min(rest - used, Math.round(rest * next[k] / otherSum));
+        used += next[k];
+      }
+    });
+  }
+  return next;
+}
+function mapQuery({ seed, mix, complex, drive }) {
+  const q = new URLSearchParams(location.search);
+  q.set('seed', String(seed));
+  q.delete('startS');
+  if (drive) q.set('drive', '1');
+  else q.delete('drive');
+  const def = mix.mountain === 50 && mix.coast === 22 && mix.city === 16 && mix.river === 12;
+  if (def) q.delete('mix');
+  else q.set('mix', [mix.mountain, mix.coast, mix.city, mix.river].join(','));
+  if (complex === 50) q.delete('complex');
+  else q.set('complex', String(complex));
+  q.set('season', season);
+  q.set('time', String(timeOfDay));
+  q.set('weather', weatherName);
+  return q;
+}
+function mapUrl(q) {
+  const url = new URL(location.href);
+  url.search = q.toString().replace(/%2C/g, ',');
+  return url;
+}
+function assignMapQuery(q) {
+  location.assign(mapUrl(q).href);
+}
+function drawMapStrip() {
+  const canvas = document.getElementById('mpMap');
+  if (!canvas) return;
+  const cssW = canvas.clientWidth || 640;
+  const cssH = 96;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  canvas.width = Math.round(cssW * dpr);
+  canvas.height = Math.round(cssH * dpr);
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const span = 8000, step = 40, n = span / step;
+  const colors = { mountain: '#8ea4b8', coast: '#2f9ec4', city: '#e2a15a', river: '#4d6fd0' };
+  const kinds = { mountain: 0, coast: 0, city: 0, river: 0 };
+  const ys = [];
+  for (let i = 0; i < n; i++) {
+    const s = i * step + step * 0.5;
+    const kind = terrainKind(s);
+    kinds[kind]++;
+    ys.push(roadYAt(s));
+    ctx.fillStyle = colors[kind];
+    ctx.fillRect(i * cssW / n, 0, cssW / n + 1, cssH);
+  }
+  let minY = Math.min(...ys), maxY = Math.max(...ys);
+  if (maxY - minY < 1) { minY -= 1; maxY += 1; }
+  ctx.beginPath();
+  ys.forEach((y, i) => {
+    const x = (i + 0.5) * cssW / n;
+    const py = cssH - 12 - (y - minY) / (maxY - minY) * (cssH - 24);
+    if (i === 0) ctx.moveTo(x, py);
+    else ctx.lineTo(x, py);
+  });
+  ctx.strokeStyle = 'rgba(255,255,255,0.92)';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  const rounded = MIX_KEYS.map(k => Math.round(kinds[k] / n * 100));
+  const drift = 100 - rounded.reduce((a, b) => a + b, 0);
+  let biggest = 0;
+  rounded.forEach((v, i) => { if (v > rounded[biggest]) biggest = i; });
+  rounded[biggest] += drift;
+  const labels = { mountain: '산', coast: '해안', city: '도시', river: '강' };
+  const stats = document.getElementById('mpStats');
+  if (stats) stats.textContent = '앞 8km · ' + MIX_KEYS.map((k, i) => labels[k] + ' ' + rounded[i] + '%').join(' · ');
+}
+function setupMapPicker() {
+  const card = document.getElementById('mapPick');
+  if (!card) return;
+  document.documentElement.classList.add('map-preview');
+  card.hidden = false;
+  const seedEl = document.getElementById('mpSeed');
+  if (seedEl) seedEl.textContent = String(WORLD_SEED);
+  const sliderId = { mountain: 'mpMountain', coast: 'mpCoast', city: 'mpCity', river: 'mpRiver' };
+  const outId = { mountain: 'mpMountainOut', coast: 'mpCoastOut', city: 'mpCityOut', river: 'mpRiverOut' };
+  const readMix = () => {
+    const mix = {};
+    for (const k of MIX_KEYS) mix[k] = +document.getElementById(sliderId[k]).value;
+    return mix;
+  };
+  const showMix = (mix, complex, skipKey) => {
+    for (const k of MIX_KEYS) {
+      if (k !== skipKey) document.getElementById(sliderId[k]).value = mix[k];
+      document.getElementById(outId[k]).textContent = mix[k] + '%';
+    }
+    if (skipKey !== 'complex') document.getElementById('mpComplex').value = complex;
+    document.getElementById('mpComplexOut').textContent = String(complex);
+  };
+  const reloadSame = () => {
+    const mix = readMix();
+    const complex = clamp(Math.round(+document.getElementById('mpComplex').value), 0, 100);
+    const same = MIX_KEYS.every(k => mix[k] === MIX[k]) && complex === COMPLEX;
+    if (same) return;
+    assignMapQuery(mapQuery({ seed: WORLD_SEED, mix, complex, drive: false }));
+  };
+  showMix(MIX, COMPLEX);
+  drawMapStrip();
+  for (const k of MIX_KEYS) {
+    const el = document.getElementById(sliderId[k]);
+    el.addEventListener('input', () => showMix(balanceMix(readMix(), k, +el.value), +document.getElementById('mpComplex').value, k));
+    el.addEventListener('change', reloadSame);
+  }
+  const complexEl = document.getElementById('mpComplex');
+  complexEl.addEventListener('input', () => { document.getElementById('mpComplexOut').textContent = complexEl.value; });
+  complexEl.addEventListener('change', reloadSame);
+  document.getElementById('mpReroll').onclick = () => {
+    let seed = Math.floor(Math.random() * 1000000);
+    if (seed === WORLD_SEED) seed = (seed + 1) % 1000000;
+    const complex = clamp(Math.round(+complexEl.value), 0, 100);
+    assignMapQuery(mapQuery({ seed, mix: readMix(), complex, drive: false }));
+  };
+  document.getElementById('mpDrive').onclick = () => {
+    const complex = clamp(Math.round(+complexEl.value), 0, 100);
+    const q = mapQuery({ seed: WORLD_SEED, mix: readMix(), complex, drive: true });
+    history.replaceState(null, '', mapUrl(q));
+    mapPreview = false;
+    document.documentElement.classList.remove('map-preview');
+    card.hidden = true;
+    if (isTouch) {
+      for (const id of ['tcJoyBase', 'tcHandbrake', 'tcGas', 'tcBrake']) {
+        const el = document.getElementById(id);
+        if (el) el.removeAttribute('aria-hidden');
+      }
+    }
+    snapNext = true;
+    updateCamera(0.016, true);
+  };
+}
+
 /* ---------------- 부트 ---------------- */
 const DEBUG_START_S = Number(RUN.get('startS')) || 6; // TEMP-TEST
-genTo(DEBUG_START_S + 720);
+if (mapPreview) genTo(8000);
+else genTo(DEBUG_START_S + 720);
 ensureSegments();
 const r0 = sampleAt(DEBUG_START_S);
 car.pos.set(r0.x, 0, r0.z);
@@ -2682,8 +2936,13 @@ car.s = DEBUG_START_S;
 carGroup.position.set(car.pos.x, car.y, car.pos.z);
 carGroup.rotation.y = car.yaw;
 carGroup.updateMatrixWorld(true);
-applyCamMode();
-updateCamera(0.016, true);
+if (mapPreview) {
+  setupMapPicker();
+  updatePreviewCamera();
+} else {
+  applyCamMode();
+  updateCamera(0.016, true);
+}
 updateHUD();
 window.__camDebug = {
   setShot(i, t) { cinematic = true; cinemaShot = -1; cinemaElapsed = i * 16 + (t || 2); updateCinemaCamera(0.016); }
