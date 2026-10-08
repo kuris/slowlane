@@ -773,7 +773,15 @@ function buildTowerBuildingGeo() {
   colorize(roof, 0.60, 0.62, 0.66);
   return mergeGeometries([base, upper, roof]);
 }
-const plantGeometries = [buildBareGeo(0), buildBareGeo(1), buildBareGeo(2), buildConiferGeo(0), buildConiferGeo(1), buildBareGeo(0, true), buildBareGeo(1, true), buildSnowRockGeo(), buildPalmGeo(), buildBoxBuildingGeo(), buildTowerBuildingGeo()];
+// 저층 슬래브형 아파트: 가로로 넓고 납작한 블록 — 박스/타워와는 다른 실루엣으로 스카이라인에 리듬을 준다.
+function buildSlabBuildingGeo() {
+  const wall = new THREE.BoxGeometry(1.6, 0.45, 1); wall.translate(0, 0.225, 0);
+  colorize(wall, 1, 1, 1);
+  const roof = new THREE.BoxGeometry(1.68, 0.04, 1.08); roof.translate(0, 0.47, 0);
+  colorize(roof, 0.56, 0.58, 0.62);
+  return mergeGeometries([wall, roof]);
+}
+const plantGeometries = [buildBareGeo(0), buildBareGeo(1), buildBareGeo(2), buildConiferGeo(0), buildConiferGeo(1), buildBareGeo(0, true), buildBareGeo(1, true), buildSnowRockGeo(), buildPalmGeo(), buildBoxBuildingGeo(), buildTowerBuildingGeo(), buildSlabBuildingGeo()];
 // 가드레일: 회색 레일 + 위에 얹은 눈층을 하나로 합침
 function buildRailBandGeo() {
   const rail = new THREE.BoxGeometry(0.12, 0.28, 2.3); rail.translate(0, 0.55, 0);
@@ -795,17 +803,34 @@ function buildReflectorGeo() {
   return mergeGeometries([post, band]);
 }
 const reflGeo = buildReflectorGeo();
-// 다리 교각: 상판 바로 아래(y=0)에서 강바닥까지(y=-1) 뻗는 단순 콘크리트 기둥
+// 다리 교각: 상판 바로 아래 캡 빔(넓음) + 강바닥까지 뻗는 기둥(좁음). 단면은 높이와 무관하게 일정.
 function buildPierGeo() {
-  const pier = new THREE.BoxGeometry(1, 1, 1); pier.translate(0, -0.5, 0);
-  colorize(pier, 0.55, 0.55, 0.57);
-  return pier;
+  const cap = new THREE.BoxGeometry(1.5, 0.12, 1.2); cap.translate(0, -0.06, 0);
+  colorize(cap, 0.50, 0.50, 0.53);
+  const shaft = new THREE.BoxGeometry(0.72, 0.88, 0.56); shaft.translate(0, -0.56, 0);
+  colorize(shaft, 0.58, 0.58, 0.60);
+  return mergeGeometries([cap, shaft]);
 }
 const pierGeo = buildPierGeo();
 const pierMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95 });
+// 가로등: 기둥+팔 (비발광) + 등 머리(야간 nightF로 발광, 도시·다리 구간에 배치)
+function buildLampPoleGeo() {
+  const pole = new THREE.BoxGeometry(0.1, 3.4, 0.1); pole.translate(0, 1.7, 0);
+  const arm = new THREE.BoxGeometry(0.55, 0.08, 0.08); arm.translate(0.3, 3.4, 0);
+  colorize(pole, 0.22, 0.23, 0.25); colorize(arm, 0.22, 0.23, 0.25);
+  return mergeGeometries([pole, arm]);
+}
+const lampPoleGeo = buildLampPoleGeo();
+const lampPoleMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.7 });
+const lampHeadGeo = new THREE.BoxGeometry(0.22, 0.14, 0.22);
+lampHeadGeo.translate(0.56, 3.33, 0);
+const lampMat = new THREE.MeshStandardMaterial({ color: 0x4a3a1a, emissive: 0xffb347, emissiveIntensity: 0, roughness: 0.6 });
+// 고층 타워 꼭대기 적색 항공장애등: 낮에도 은은히, 야간엔 nightF로 밝게
+const beaconGeo = new THREE.SphereGeometry(0.16, 8, 6);
+const beaconMat = new THREE.MeshStandardMaterial({ color: 0x4a0804, emissive: 0xff2200, emissiveIntensity: 0.4, roughness: 0.5 });
 
 /* ---------------- InstancedMesh 풀 ---------------- */
-const TREE_CAP = 720, RAIL_CAP = 300, POST_CAP = 150, REFL_CAP = 90, PIER_CAP = 36;
+const TREE_CAP = 720, RAIL_CAP = 300, POST_CAP = 150, REFL_CAP = 90, PIER_CAP = 36, LAMP_CAP = 120, BEACON_CAP = 40;
 function makeInst(geo, mat, cap) {
   const m = new THREE.InstancedMesh(geo, mat, cap);
   m.frustumCulled = false;
@@ -815,7 +840,7 @@ function makeInst(geo, mat, cap) {
   return m;
 }
 const plantPools = plantGeometries.map((geo, kind) => {
-  const mesh = makeInst(geo, kind >= 9 ? buildingMat : trunkMat, kind < 5 ? 200 : kind < 7 ? 300 : kind < 9 ? 100 : kind === 9 ? 140 : 70);
+  const mesh = makeInst(geo, kind >= 9 ? buildingMat : trunkMat, kind < 5 ? 200 : kind < 7 ? 300 : kind < 9 ? 100 : kind === 9 ? 140 : kind === 10 ? 70 : 90);
   mesh.count = 0; mesh.receiveShadow = true;
   return mesh;
 });
@@ -824,6 +849,9 @@ const postMesh = makeInst(railPostGeo, railMat, POST_CAP);
 const reflMesh = makeInst(reflGeo, reflMat, REFL_CAP);
 const pierMesh = makeInst(pierGeo, pierMat, PIER_CAP);
 pierMesh.receiveShadow = true;
+const lampPoleMesh = makeInst(lampPoleGeo, lampPoleMat, LAMP_CAP);
+const lampHeadMesh = makeInst(lampHeadGeo, lampMat, LAMP_CAP);
+const beaconMesh = makeInst(beaconGeo, beaconMat, BEACON_CAP);
 
 const UP = new THREE.Vector3(0, 1, 0);
 const _m4 = new THREE.Matrix4(), _q = new THREE.Quaternion(), _p = new THREE.Vector3(), _s = new THREE.Vector3(1, 1, 1), _c = new THREE.Color();
@@ -831,7 +859,7 @@ const activeTrees = []; // 충돌 판정용
 let dirtyPools = true;
 
 function rebuildPools() {
-  let nT = 0, nB = 0, nP = 0, nR = 0, nPier = 0;
+  let nT = 0, nB = 0, nP = 0, nR = 0, nPier = 0, nLamp = 0, nBeacon = 0;
   const plantCounts = plantPools.map(() => 0);
   activeTrees.length = 0;
   // 풀이 가득 차도 차량 근처의 군집을 우선해 눈앞의 식생이 사라지지 않게 한다.
@@ -844,7 +872,14 @@ function rebuildPools() {
       _p.set(t.x, t.y, t.z); _s.set(t.s * t.width, t.s, t.s * t.width);
       _m4.compose(_p, _q, _s);
       pool.setMatrixAt(index, _m4);
-      if (t.kind >= 9) _c.setHSL(t.tint, lerp(0.15, 0.35, (t.tint * 7) % 1), lerp(0.55, 0.82, (t.tint * 13) % 1));
+      if (t.kind >= 9) {
+        // 건물은 4가지 외장재 계열(연한 콘크리트/블루 글라스/다크 그래파이트/테라코타)에서 골라 스카이라인에 재질감을 섞는다.
+        const fam = Math.floor(t.tint * 4) % 4, v1 = (t.tint * 7) % 1, v2 = (t.tint * 13) % 1;
+        if (fam === 0) _c.setHSL(0.09 + v1 * 0.05, lerp(0.06, 0.16, v2), lerp(0.78, 0.93, v1));
+        else if (fam === 1) _c.setHSL(lerp(0.55, 0.62, v1), lerp(0.35, 0.55, v2), lerp(0.40, 0.56, v1));
+        else if (fam === 2) _c.setHSL(0, 0, lerp(0.22, 0.38, v1));
+        else _c.setHSL(lerp(0.02, 0.06, v1), lerp(0.35, 0.52, v2), lerp(0.40, 0.54, v1));
+      }
       else _c.setRGB(0.92 + t.tint * 0.08, 0.95 + t.tint * 0.05, 1);
       pool.setColorAt(index, _c);
       plantCounts[t.kind]++;
@@ -881,16 +916,36 @@ function rebuildPools() {
       _m4.compose(_p, _q, _s);
       pierMesh.setMatrixAt(nPier, _m4); nPier++;
     }
+    for (const l of seg.lamps) {
+      if (nLamp >= LAMP_CAP) break;
+      _q.setFromAxisAngle(UP, l.rot);
+      _p.set(l.x, l.y, l.z); _s.set(1, 1, 1);
+      _m4.compose(_p, _q, _s);
+      lampPoleMesh.setMatrixAt(nLamp, _m4);
+      lampHeadMesh.setMatrixAt(nLamp, _m4);
+      nLamp++;
+    }
+    for (const bc of seg.beacons) {
+      if (nBeacon >= BEACON_CAP) break;
+      _q.identity();
+      _p.set(bc.x, bc.y, bc.z); _s.set(1, 1, 1);
+      _m4.compose(_p, _q, _s);
+      beaconMesh.setMatrixAt(nBeacon, _m4); nBeacon++;
+    }
   }
   plantPools.forEach((pool, kind) => {
     pool.count = plantCounts[kind]; pool.instanceMatrix.needsUpdate = true;
     if (pool.instanceColor) pool.instanceColor.needsUpdate = true;
   });
   bandMesh.count = nB; postMesh.count = nP; reflMesh.count = nR; pierMesh.count = nPier;
+  lampPoleMesh.count = nLamp; lampHeadMesh.count = nLamp; beaconMesh.count = nBeacon;
   bandMesh.instanceMatrix.needsUpdate = true;
   postMesh.instanceMatrix.needsUpdate = true;
   reflMesh.instanceMatrix.needsUpdate = true;
   pierMesh.instanceMatrix.needsUpdate = true;
+  lampPoleMesh.instanceMatrix.needsUpdate = true;
+  lampHeadMesh.instanceMatrix.needsUpdate = true;
+  beaconMesh.instanceMatrix.needsUpdate = true;
 }
 
 /* ---------------- 세그먼트 추가/제거 ---------------- */
@@ -900,13 +955,14 @@ function placeScenery(seg, s, lat, kind, id) {
   // 굽은 도로의 다른 부분도 확인한다. 가지·눈 덩어리까지 도로 밖에 남긴다.
   const isBuilding = kind >= 9;
   // 건물은 scale/width를 작은 배율이 아니라 "실제 미터" 단위로 써서 높이·바닥면적을 직접 지정한다.
-  const footprintM = isBuilding ? lerp(7, 16, hash2(id, 119)) : 0;
-  const scale = isBuilding ? (kind === 9 ? lerp(7, 18, hash2(id, 113)) : lerp(10, 28, hash2(id, 113)))
+  // kind 11(슬래브)은 로컬 지오메트리 자체가 가로로 넓어(1.6:1) footprintM은 세로(Z) 기준이다.
+  const footprintM = isBuilding ? lerp(kind === 11 ? 9 : 7, kind === 11 ? 15 : 16, hash2(id, 119)) : 0;
+  const scale = isBuilding ? (kind === 9 ? lerp(7, 18, hash2(id, 113)) : kind === 10 ? lerp(10, 28, hash2(id, 113)) : lerp(13, 21, hash2(id, 113)))
     : kind < 3 ? lerp(0.95, 1.65, hash2(id, 111))
     : kind < 5 ? lerp(0.8, 1.45, hash2(id, 113))
     : kind < 7 ? lerp(0.65, 1.3, hash2(id, 115)) : lerp(0.55, 1.1, hash2(id, 117));
   const width = isBuilding ? footprintM / scale : lerp(0.82, 1.18, hash2(id, 119));
-  const crown = isBuilding ? footprintM * 0.6 + 5.6
+  const crown = isBuilding ? footprintM * (kind === 11 ? 1.6 : 1) * 0.6 + 5.6
     : (kind === 8 ? 3.2 : kind < 3 ? 3.4 : kind < 5 ? 2.4 : 1.1) * scale * width;
   for (let j = Math.max(0, Math.floor(s - baseS - 140)); j < Math.min(roadSamples.length, s - baseS + 140); j += 3) {
     const p = roadSamples[j];
@@ -924,10 +980,11 @@ function placeScenery(seg, s, lat, kind, id) {
     : h11 + (1 - u) * (h01 - h11) + (1 - f) * (h10 - h11);
   seg.trees.push({ x, z, y: meshY - 0.08, s: scale, width, kind,
     rot: hash2(id, 121) * Math.PI * 2, tint: hash2(id, 123) });
+  if (kind === 10) seg.beacons.push({ x, y: meshY - 0.08 + scale, z }); // 타워 꼭대기 항공장애등
 }
 function addSegment(i) {
   const s0 = i * SEG, s1 = s0 + SEG;
-  const seg = { trees: [], bands: [], posts: [], refls: [], piers: [] };
+  const seg = { trees: [], bands: [], posts: [], refls: [], piers: [], beacons: [], lamps: [] };
 
   const roadMesh = new THREE.Mesh(buildRoadGeo(s0, s1), roadMat);
   roadMesh.receiveShadow = true;
@@ -987,7 +1044,8 @@ function addSegment(i) {
           const id = i * 97 + side * 131 + row * 13 + Math.floor(s) + WORLD_SEED % 2017;
           const jitterLat = (hash2(id, 211) - 0.5) * 6;
           const jitterS = (hash2(id, 223) - 0.5) * 6;
-          const kind = hash2(id, 227) < 0.75 ? 9 : 10;
+          const pick = hash2(id, 227);
+          const kind = pick < 0.5 ? 9 : pick < 0.78 ? 10 : 11;
           placeScenery(seg, s + jitterS, side * (rowLat + jitterLat), kind, id);
         }
       }
@@ -1001,6 +1059,18 @@ function addSegment(i) {
     for (const side of [-1, 1]) {
       const lat = side * 3.6;
       seg.piers.push({ x: r.x + r.rx * lat, y: deckY, z: r.z + r.rz * lat, height: deckY - bedY });
+    }
+  }
+
+  // 가로등: 도시 거리와 다리 구간에 ~20m 간격으로 배치(야간 nightF로 발광)
+  for (let s = s0 + 8; s < s1; s += 20) {
+    const city = cityAmount(s), river = riverAmount(s);
+    if (city < 0.5 && river < 0.5) continue;
+    const r = sampleAt(s), lat0 = city >= 0.5 ? 7.4 : 5.6;
+    for (const side of [-1, 1]) {
+      const lat = side * lat0;
+      // 다리 구간은 교각처럼 상판 높이에 세우고(강바닥이 아니라), 도시는 평탄화된 거리 높이 그대로 사용
+      seg.lamps.push({ x: r.x + r.rx * lat, y: r.y - 0.06, z: r.z + r.rz * lat, rot: side > 0 ? r.h + Math.PI : r.h });
     }
   }
 
@@ -1369,7 +1439,10 @@ let touchSteer = 0; // 조이스틱 아날로그 조향(-1 좌 ~ 1 우)
 let touchGas = 0, touchBrake = 0; // 조이스틱 아날로그 가속/제동(0~1)
 const isTouch = matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
 if (isTouch) {
+  document.documentElement.classList.add('touch');
   document.body.classList.add('touch');
+  const touchRoot = document.getElementById('touchControls');
+  if (touchRoot) touchRoot.setAttribute('aria-hidden', 'false');
   const hint = document.getElementById('hint');
   if (hint) hint.textContent = '조이스틱으로 조향·가속·제동 · P 핸드브레이크 · 상단 아이콘 시점/날씨/소리';
 
@@ -1812,6 +1885,8 @@ function computeSky() {
   stars.visible = nightF > 0.02;
   headLights.forEach(h => h.intensity = nightF * 90);
   buildingMat.emissiveIntensity = nightF * 1.8;
+  lampMat.emissiveIntensity = nightF * 2.2;
+  beaconMat.emissiveIntensity = 0.4 + nightF * 2.1;
 }
 function updateWeather(dt) {
   const L = 1 - Math.exp(-dt * 0.9);
@@ -2119,11 +2194,15 @@ let musicEnabled = true, musicVolume = 0.32, musicStarting = false;
 const musicButton = document.getElementById('bMusic');
 const musicStartButton = document.getElementById('bStartMusic');
 const trackSelect = document.getElementById('sTrack');
+function musicStartLabel(message) {
+  if (message) return message;
+  return document.documentElement.classList.contains('touch') ? '▶ 소리 켜기' : '▶ 전체 소리 켜기 · 눌러서 시작';
+}
 function updateMusicStatus(message) {
   const playing = musicEnabled && !muted && !jazz.paused;
   musicButton.textContent = message || (playing ? '음악 끄기' : '음악 재생');
   musicStartButton.style.display = playing || !musicEnabled ? 'none' : 'block';
-  musicStartButton.textContent = message || '▶ 전체 소리 켜기 · 눌러서 시작';
+  musicStartButton.textContent = musicStartLabel(message);
 }
 function syncMusic() {
   jazz.volume = muted || !musicEnabled ? 0 : musicVolume;
@@ -2191,7 +2270,7 @@ function initAudio() {
     loadRecordedEngine();
   }
   if (AC.state === 'suspended' || AC.state === 'interrupted') {
-    AC.resume().catch(() => { musicStartButton.style.display = 'block'; musicStartButton.textContent = '▶ 효과음 시작 · 다시 눌러주세요'; });
+    AC.resume().catch(() => { musicStartButton.style.display = 'block'; musicStartButton.textContent = musicStartLabel('▶ 다시 눌러 시작'); });
   }
 }
 function toggleMute() { muted = !muted; if (master) master.gain.value = muted ? 0 : 0.55; syncMusic(); toast(muted ? '소리 끔' : '소리 켬'); }
@@ -2474,18 +2553,22 @@ addEventListener('resize', () => {
 });
 
 /* ---------------- 부트 ---------------- */
-genTo(720);
+const DEBUG_START_S = Number(RUN.get('startS')) || 6; // TEMP-TEST
+genTo(DEBUG_START_S + 720);
 ensureSegments();
-const r0 = sampleAt(6);
+const r0 = sampleAt(DEBUG_START_S);
 car.pos.set(r0.x, 0, r0.z);
 car.yaw = r0.h;
 car.y = r0.y + 0.02;
-car.s = 6;
+car.s = DEBUG_START_S;
 carGroup.position.set(car.pos.x, car.y, car.pos.z);
 carGroup.rotation.y = car.yaw;
 carGroup.updateMatrixWorld(true);
 applyCamMode();
 updateCamera(0.016, true);
 updateHUD();
+window.__camDebug = {
+  setShot(i, t) { cinematic = true; cinemaShot = -1; cinemaElapsed = i * 16 + (t || 2); updateCinemaCamera(0.016); }
+};
 frame();
 window.__booted = true;

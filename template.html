@@ -16,6 +16,15 @@
 }
 </script>
 <script>
+/* 폴드 커버·이너 모두 터치. 모듈보다 먼저 붙여 시점 버튼이 첫 프레임부터 보이게 한다. */
+(function () {
+  try {
+    if (window.matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0)
+      document.documentElement.classList.add('touch');
+  } catch (e) {}
+})();
+</script>
+<script>
 // 부트 가드: 모듈 로딩 실패(오프라인 등) 시 화면에 안내
 window.__booted = false;
 window.addEventListener('error', function (e) {
@@ -52,7 +61,7 @@ setTimeout(function () {
 
 <div id="cinemaFade" aria-hidden="true"></div>
 <button id="exitCinema" type="button">감상 종료 · Esc</button>
-<button id="bStartMusic" type="button" style="position:fixed;top:18px;right:18px;z-index:30;padding:12px 18px;border:1px solid #b5cdec;border-radius:8px;background:#142431;color:#fff;cursor:pointer">▶ 전체 소리 켜기 · 눌러서 시작</button>
+<button id="bStartMusic" type="button">▶ 전체 소리 켜기 · 눌러서 시작</button>
 <div id="flash"></div>
 <div id="camToast"></div>
 <div id="wpanel" style="display:none">
@@ -84,9 +93,9 @@ setTimeout(function () {
 
 <div id="touchControls" aria-hidden="true">
   <div class="tc-top">
-    <button id="tcCam" class="tc-btn tc-icon" type="button" aria-label="시점 전환">⟳</button>
-    <button id="tcWeather" class="tc-btn tc-icon" type="button" aria-label="날씨 설정">☁</button>
-    <button id="tcMute" class="tc-btn tc-icon" type="button" aria-label="소리 켜기/끄기">♪</button>
+    <button id="tcCam" class="tc-btn tc-icon" type="button" aria-label="시점 전환">시점</button>
+    <button id="tcWeather" class="tc-btn tc-icon" type="button" aria-label="날씨 설정">날씨</button>
+    <button id="tcMute" class="tc-btn tc-icon" type="button" aria-label="소리 켜기/끄기">소리</button>
   </div>
   <div id="tcJoyBase" class="tc-joy-base" aria-label="조향 조이스틱">
     <div id="tcJoyKnob" class="tc-joy-knob"></div>
