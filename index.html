@@ -2296,9 +2296,12 @@ const NATURAL_WEATHER = {
  autumn: ['clear','drizzle','rain','clear'],
  winter: ['clear','snow','snow','clear']
 };
-// 비율을 안 건드리거나 50,22,16,12이면 지금 초반 해안과 2.2km 이후 배치를 유지한다.
+// 비율을 안 건드리거나 기본값이면 지금 초반 해안과 2.2km 이후 배치를 유지한다.
+const DEFAULT_MIX = { mountain: 50, coast: 22, city: 16, river: 12 };
+const isDefaultMix = mix => mix.mountain === DEFAULT_MIX.mountain && mix.coast === DEFAULT_MIX.coast
+  && mix.city === DEFAULT_MIX.city && mix.river === DEFAULT_MIX.river;
 let mixCustom = false;
-let MIX = { mountain: 50, coast: 22, city: 16, river: 12 };
+let MIX = { ...DEFAULT_MIX };
 let COMPLEX = 50;
 let complexMul = 1;
 let mapPreview = false;
@@ -2396,7 +2399,7 @@ function fbm(x, y) {
   return f;
 }
 function parseMixParam(raw) {
-  const fallback = { mountain: 50, coast: 22, city: 16, river: 12, custom: false };
+  const fallback = { ...DEFAULT_MIX, custom: false };
   if (!raw) return fallback;
   const parts = String(raw).split(',').map(Number);
   if (parts.length !== 4 || parts.some(n => !Number.isFinite(n))) return fallback;
@@ -2410,7 +2413,7 @@ function parseMixParam(raw) {
     for (let k = 0; k < left; k++) scaled[rank[k].i]++;
     vals = scaled;
   }
-  const custom = !(vals[0] === 50 && vals[1] === 22 && vals[2] === 16 && vals[3] === 12);
+  const custom = !isDefaultMix({ mountain: vals[0], coast: vals[1], city: vals[2], river: vals[3] });
   return { mountain: vals[0], coast: vals[1], city: vals[2], river: vals[3], custom };
 }
 {
@@ -2585,7 +2588,6 @@ sea.rotation.x = -Math.PI / 2; sea.position.y = SEA_LEVEL; scene.add(sea);
    얼음 패치는 거칠기맵에서 매끄러워져 햇빛에 반사광이 생깁니다. */
 function buildRoadTextures() {
   const S = 256;
-  const blobs = []; // 컬러맵/거칠기맵이 같은 위치를 공유
   // 큰 원형 얼음 패치 대신 미세한 아스팔트 질감만 반복한다.
 
   // 컬러맵
@@ -2605,12 +2607,6 @@ function buildRoadTextures() {
     lg.addColorStop(1, 'rgba(212,218,224,0)');
     g.fillStyle = lg; g.fillRect(cx - 24, 0, 48, S);
   }
-  for (const [x, y, r] of blobs) { // 얼음/젖은 패치
-    const rg = g.createRadialGradient(x, y, 0, x, y, r);
-    rg.addColorStop(0, 'rgba(185,198,210,0.32)');
-    rg.addColorStop(1, 'rgba(185,198,210,0)');
-    g.fillStyle = rg; g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill();
-  }
   // 가장자리 눈은 텍스처에 넣지 않는다 — 지오메트리(눈 어깨 스트립)로 처리
   // (텍스처 가장자리 흰색은 원거리 밉맵에서 번져 노면이 하얗게 씻겨 나감)
 
@@ -2624,12 +2620,6 @@ function buildRoadTextures() {
   const cv2 = document.createElement('canvas'); cv2.width = cv2.height = S;
   const g2 = cv2.getContext('2d');
   g2.fillStyle = '#d6d6d6'; g2.fillRect(0, 0, S, S);
-  for (const [x, y, r] of blobs) {
-    const rg = g2.createRadialGradient(x, y, 0, x, y, r);
-    rg.addColorStop(0, 'rgba(70,70,70,0.85)');
-    rg.addColorStop(1, 'rgba(70,70,70,0)');
-    g2.fillStyle = rg; g2.beginPath(); g2.arc(x, y, r, 0, Math.PI * 2); g2.fill();
-  }
   const rough = new THREE.CanvasTexture(cv2);
   rough.wrapS = THREE.ClampToEdgeWrapping;
   rough.wrapT = THREE.RepeatWrapping;
@@ -2889,11 +2879,14 @@ function tpos(s, lat) {
   return { x: r.x + r.rx * lat, y: groundY(s, lat), z: r.z + r.rz * lat };
 }
 function buildTerrainGeo(s0) {
-  const nC = TCOLS.length, rows = 7; // 양쪽 끝 1열씩은 법선 계산용 헬퍼
+  const nC = TCOLS.length;
+  const HELPER_ROWS = 1; // 앞뒤 각 1열은 법선 계산에만 쓰고 지오메트리에는 포함하지 않는다
+  const realRows = SEG / 6 + 1; // 세그먼트 길이 6m 간격의 실제 지표면 줄 수
+  const rows = realRows + HELPER_ROWS * 2;
   const pos = new Float32Array(rows * nC * 3), nor = new Float32Array(rows * nC * 3), col = new Float32Array(rows * nC * 3);
   const idx = [];
   for (let j = 0; j < rows; j++) {
-    const s = s0 + (j - 1) * 6;
+    const s = s0 + (j - HELPER_ROWS) * 6;
     for (let i = 0; i < nC; i++) {
       const lat = TCOLS[i], k = j * nC + i;
       const p = tpos(s, lat);
@@ -2911,7 +2904,7 @@ function buildTerrainGeo(s0) {
       col[k * 3] = cc[0]; col[k * 3 + 1] = cc[1]; col[k * 3 + 2] = cc[2];
     }
   }
-  for (let j = 1; j <= rows - 3; j++) for (let i = 0; i < nC - 1; i++) {
+  for (let j = HELPER_ROWS; j <= rows - HELPER_ROWS - 2; j++) for (let i = 0; i < nC - 1; i++) {
     const a = j * nC + i, b = (j + 1) * nC + i;
     idx.push(a, a + 1, b, a + 1, b + 1, b);
   }
@@ -5113,8 +5106,7 @@ function mapQuery({ seed, mix, complex, drive }) {
   q.delete('startS');
   if (drive) q.set('drive', '1');
   else q.delete('drive');
-  const def = mix.mountain === 50 && mix.coast === 22 && mix.city === 16 && mix.river === 12;
-  if (def) q.delete('mix');
+  if (isDefaultMix(mix)) q.delete('mix');
   else q.set('mix', [mix.mountain, mix.coast, mix.city, mix.river].join(','));
   if (complex === 50) q.delete('complex');
   else q.set('complex', String(complex));
@@ -5178,7 +5170,7 @@ function drawMapStrip() {
 // 도로 중심선·세그먼트·식생 풀을 전부 비우고 같은 규칙으로 다시 쌓으면 된다.
 function regenerateWorld(mix, complex) {
   MIX = { ...mix };
-  mixCustom = !(MIX.mountain === 50 && MIX.coast === 22 && MIX.city === 16 && MIX.river === 12);
+  mixCustom = !isDefaultMix(MIX);
   COMPLEX = complex;
   complexMul = COMPLEX <= 50 ? lerp(0.35, 1, COMPLEX / 50) : lerp(1, 1.7, (COMPLEX - 50) / 50);
 
