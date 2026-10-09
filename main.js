@@ -1533,7 +1533,7 @@ gltfLoader.load('assets/ToyCar.glb', gltf => {
   root.scale.setScalar(4.35 / Math.max(size.x, size.z)); // 전장 4.35m로 정규화
   const holder = new THREE.Group();
   holder.add(root);
-  if (size.x >= size.z) root.rotation.y = -Math.PI / 2; // 전방(-Z) 정렬 + 반전 (앞모습 플립 수정)
+  root.rotation.y = (size.x >= size.z ? -Math.PI / 2 : 0) + Math.PI; // 전방(-Z) 정렬 + 반전 (앞모습 플립 수정)
   root.updateMatrixWorld(true);
   const box2 = new THREE.Box3().setFromObject(holder);
   holder.position.y -= box2.min.y; // 바퀴가 지면에 닿도록

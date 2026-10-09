@@ -511,6 +511,19 @@ body.touch.cinematic #exitCinema {
 .mp-card output { float: right; font-variant-numeric: tabular-nums; opacity: 0.9; }
 .mp-card input[type=range] { display: block; width: 100%; margin-top: 4px; accent-color: #9cc2ec; }
 .mp-complex { margin-top: 4px; }
+.mp-car-label { margin-top: 8px; font: 600 12px/1.3 "Segoe UI", "Noto Sans KR", sans-serif; opacity: 0.85; }
+.mp-cars { display: flex; gap: 8px; margin-top: 4px; }
+.mp-car-btn {
+  flex: 1;
+  min-height: 40px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  background: rgba(255, 255, 255, 0.06);
+  color: #f2f6fb;
+  font: 600 12px/1.3 "Segoe UI", "Noto Sans KR", sans-serif;
+  cursor: pointer;
+}
+.mp-car-btn.active { background: #9cc2ec; color: #10151c; border-color: transparent; }
 .mp-actions { display: flex; gap: 8px; margin-top: 10px; }
 .mp-actions button {
   flex: 1;
@@ -582,7 +595,7 @@ setTimeout(function () {
 <div id="vignette"></div>
 <div id="crtOverlay" aria-hidden="true"></div>
 <div id="error"></div>
-<div class="hud" id="title">FROSTLINE<small>겨울 산길 드라이빙 · MVP</small><small class="credit">Car · Khronos ToyCar (CC0) &nbsp;/&nbsp; 식생 · 절차적 가지 지오메트리 · Terrain · Isaac Sukin (MIT)</small><small class="credit">엔진 녹음 · qubodup · CC BY 3.0 · 반복 경계 혼합 및 속도 조절</small></div>
+<div class="hud" id="title">FROSTLINE<small>겨울 산길 드라이빙 · MVP</small><small class="credit">Car · <span id="carCredit">Khronos ToyCar (CC0)</span> &nbsp;/&nbsp; 식생 · 절차적 가지 지오메트리 · Terrain · Isaac Sukin (MIT)</small><small class="credit">엔진 녹음 · qubodup · CC BY 3.0 · 반복 경계 혼합 및 속도 조절</small></div>
 <div class="hud" id="speed"><div class="val" id="speedVal">0</div><div class="unit">KM/H</div></div>
 <div class="hud" id="dist"><span class="lbl">주행 거리</span><span id="distVal">0.00 km</span></div>
 <div class="hud" id="clock">10:30</div>
@@ -3799,62 +3812,98 @@ function buildCar() {
 buildCar();
 
 /* ---------------- 공개 GLB 차량 (로드 성공 시 프로시저럴 대체, 실패 시 유지) ----------------
-   - 차량: Khronos glTF Sample Assets "ToyCar" (CC0) */
+   - 차량: Khronos glTF Sample Assets "ToyCar" (CC0) / 1985 DeLorean DMC-12 "Time Machine" (Sketchfab, 비상업적 이용) */
 const gltfLoader = new GLTFLoader();
 
-// --- 자동차 GLB ---
-gltfLoader.load('assets/ToyCar.glb', gltf => {
-  const root = gltf.scene;
-  const cams = [];
-  root.traverse(o => { if (o.isCamera) cams.push(o); });
-  cams.forEach(c => c.parent && c.parent.remove(c)); // 모델에 포함된 카메라 제거
-  const fab = [];
-  root.traverse(o => { if (o.isMesh && o.material && (o.material.name || '').toLowerCase().includes('fabric')) fab.push(o); });
-  fab.forEach(o => o.parent && o.parent.remove(o)); // 전시용 받침 천(Fabric) 제거
-  root.updateMatrixWorld(true);
-  const box = new THREE.Box3().setFromObject(root);
-  const size = box.getSize(new THREE.Vector3());
-  root.scale.setScalar(4.35 / Math.max(size.x, size.z)); // 전장 4.35m로 정규화
-  const holder = new THREE.Group();
-  holder.add(root);
-  if (size.x >= size.z) root.rotation.y = -Math.PI / 2; // 전방(-Z) 정렬 + 반전 (앞모습 플립 수정)
-  root.updateMatrixWorld(true);
-  const box2 = new THREE.Box3().setFromObject(holder);
-  holder.position.y -= box2.min.y; // 바퀴가 지면에 닿도록
-  holder.traverse(o => {
-    if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; }
-  });
-  // 도장 재질만 흰색으로 (유리는 원본 유지)
-  root.traverse(o => {
-    if (o.isMesh && o.material) {
-      const mn = (o.material.name || '').toLowerCase();
-      if (mn.includes('toycar') || mn.includes('paint') || mn.includes('body')) {
-        o.material = o.material.clone();
-        // 원본은 차체·타이어·크롬이 하나의 텍스처를 공유한다.
-        // 텍스처를 보존하고 붉은 도장 부분만 은백색으로 치환한다.
-        o.material.color = new THREE.Color(0xffffff);
-        o.material.onBeforeCompile = shader => {
-          shader.fragmentShader = shader.fragmentShader.replace('#include <map_fragment>', `
-            #include <map_fragment>
-            float paintMask = smoothstep(0.06, 0.20, diffuseColor.r - max(diffuseColor.g, diffuseColor.b));
-            float paintShade = clamp(diffuseColor.r * 1.1, 0.12, 0.88);
-            diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.88, 0.93, 0.98) * paintShade, paintMask);
-          `);
-        };
-        o.material.customProgramCacheKey = () => 'silver-paint-preserve-atlas-v1';
-        o.material.envMapIntensity = 1.3;
-      }
-    }
-  });
-  glassMeshes.length = 0;
-  root.traverse(o => { if (o.isMesh && o.material && (o.material.name || '').toLowerCase().includes('glass')) glassMeshes.push(o); });
-  applyCamMode();
-  bodyGroup.add(holder);
-  fitWindshieldGlass(); // 원본 유리 메시의 앞쪽 면만 차량 로컬 좌표로 보관
-  procBody.visible = false; // GLB 차량으로 교체
-}, undefined, () => console.warn('자동차 GLB 로드 실패 — 프로시저럴 차량 유지'));
+const CAR_DEFS = {
+  toycar: {
+    label: 'ToyCar',
+    url: 'assets/ToyCar.glb',
+    length: 4.35,
+    flipExtra: Math.PI, // 이 모델은 기본 상태에서 앞면이 +Z를 향해 180도 보정 필요
+    recolor: mn => mn.includes('toycar') || mn.includes('paint') || mn.includes('body'),
+    removeMatch: mn => mn.includes('fabric'), // 전시용 받침 천 제거
+    credit: 'Khronos ToyCar (CC0)',
+  },
+  delorean: {
+    label: 'DeLorean',
+    url: 'assets/1985-delorean-dmc-12-time-machine-bttf/source/1985_delorean_dmc-12_time_machine_bttf.glb',
+    length: 4.27,
+    flipExtra: Math.PI, // 이 모델도 기본 상태에서 앞면이 +Z를 향해 180도 보정 필요
+    recolor: null, // 원본 페인트(스테인리스 차체) 유지
+    removeMatch: null,
+    credit: '1985 DeLorean DMC-12 "Time Machine" (Sketchfab, 비상업적 이용)',
+  },
+};
+let carKey = CAR_DEFS[RUN.get('car')] ? RUN.get('car') : 'toycar';
+let currentCarHolder = null;
 
-// 단일 GLB 소나무로 전체 식생을 덮어쓰지 않는다. 차량 로더는 기존 그대로 유지한다.
+function loadCarModel(key) {
+  const def = CAR_DEFS[key] || CAR_DEFS.toycar;
+  const loadToken = ++loadCarModel.token;
+  procBody.visible = true; // 로드되는 동안 프로시저럴 차량을 임시로 보여준다
+  if (currentCarHolder) { bodyGroup.remove(currentCarHolder); currentCarHolder = null; }
+  gltfLoader.load(def.url, gltf => {
+    if (loadToken !== loadCarModel.token) return; // 로드 중 다른 차량으로 전환됨
+    const root = gltf.scene;
+    const cams = [];
+    root.traverse(o => { if (o.isCamera) cams.push(o); });
+    cams.forEach(c => c.parent && c.parent.remove(c)); // 모델에 포함된 카메라 제거
+    if (def.removeMatch) {
+      const drop = [];
+      root.traverse(o => { if (o.isMesh && o.material && def.removeMatch((o.material.name || '').toLowerCase())) drop.push(o); });
+      drop.forEach(o => o.parent && o.parent.remove(o));
+    }
+    root.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(root);
+    const size = box.getSize(new THREE.Vector3());
+    root.scale.setScalar(def.length / Math.max(size.x, size.z)); // 전장을 실제 크기로 정규화
+    const holder = new THREE.Group();
+    holder.add(root);
+    root.rotation.y = (size.x >= size.z ? -Math.PI / 2 : 0) + def.flipExtra; // 전방(-Z) 정렬
+    root.updateMatrixWorld(true);
+    const box2 = new THREE.Box3().setFromObject(holder);
+    holder.position.y -= box2.min.y; // 바퀴가 지면에 닿도록
+    holder.traverse(o => {
+      if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; }
+    });
+    if (def.recolor) {
+      // 도장 재질만 흰색으로 (유리는 원본 유지)
+      root.traverse(o => {
+        if (o.isMesh && o.material) {
+          const mn = (o.material.name || '').toLowerCase();
+          if (def.recolor(mn)) {
+            o.material = o.material.clone();
+            // 원본은 차체·타이어·크롬이 하나의 텍스처를 공유한다.
+            // 텍스처를 보존하고 붉은 도장 부분만 은백색으로 치환한다.
+            o.material.color = new THREE.Color(0xffffff);
+            o.material.onBeforeCompile = shader => {
+              shader.fragmentShader = shader.fragmentShader.replace('#include <map_fragment>', `
+                #include <map_fragment>
+                float paintMask = smoothstep(0.06, 0.20, diffuseColor.r - max(diffuseColor.g, diffuseColor.b));
+                float paintShade = clamp(diffuseColor.r * 1.1, 0.12, 0.88);
+                diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.88, 0.93, 0.98) * paintShade, paintMask);
+              `);
+            };
+            o.material.customProgramCacheKey = () => 'silver-paint-preserve-atlas-v1';
+            o.material.envMapIntensity = 1.3;
+          }
+        }
+      });
+    }
+    glassMeshes.length = 0;
+    root.traverse(o => { if (o.isMesh && o.material && /glass|window/.test((o.material.name || '').toLowerCase())) glassMeshes.push(o); });
+    applyCamMode();
+    bodyGroup.add(holder);
+    fitWindshieldGlass(); // 원본 유리 메시의 앞쪽 면만 차량 로컬 좌표로 보관
+    procBody.visible = false; // GLB 차량으로 교체
+    currentCarHolder = holder;
+    const creditEl = document.getElementById('carCredit');
+    if (creditEl) creditEl.textContent = def.credit;
+  }, undefined, () => console.warn(def.label + ' GLB 로드 실패 — 프로시저럴 차량 유지'));
+}
+loadCarModel.token = 0;
+loadCarModel(carKey);
 
 /* ---------------- 눈 분진 파티클 ---------------- */
 const PMAX = 300;
@@ -5155,6 +5204,8 @@ function mapQuery({ seed, mix, complex, drive }) {
   else q.set('mix', [mix.mountain, mix.coast, mix.city, mix.river].join(','));
   if (complex === 50) q.delete('complex');
   else q.set('complex', String(complex));
+  if (carKey === 'toycar') q.delete('car');
+  else q.set('car', carKey);
   q.set('season', season);
   q.set('time', String(timeOfDay));
   q.set('weather', weatherName);
@@ -5307,6 +5358,18 @@ function setupMapPicker() {
     history.replaceState(null, '', mapUrl(q));
   };
   showMix(MIX, COMPLEX);
+  const carButtons = [...document.querySelectorAll('#mpCars .mp-car-btn')];
+  const showCar = () => { for (const b of carButtons) b.classList.toggle('active', b.dataset.car === carKey); };
+  showCar();
+  for (const b of carButtons) {
+    b.addEventListener('click', () => {
+      if (b.dataset.car === carKey) return;
+      carKey = b.dataset.car;
+      showCar();
+      loadCarModel(carKey);
+      syncUrl();
+    });
+  }
   drawMapStrip();
   renderer.domElement.style.touchAction = 'none';
   const mapCanvas = document.getElementById('mpMap');
@@ -5452,6 +5515,11 @@ window.__booted = true;
       <label>강 <output id="mpRiverOut">12%</output><input id="mpRiver" type="range" min="0" max="100" step="1" value="12"></label>
     </div>
     <label class="mp-complex">길 복잡도 <output id="mpComplexOut">50</output><input id="mpComplex" type="range" min="0" max="100" step="1" value="50"></label>
+    <div class="mp-car-label">차량</div>
+    <div class="mp-cars" id="mpCars">
+      <button type="button" class="mp-car-btn" data-car="toycar">ToyCar</button>
+      <button type="button" class="mp-car-btn" data-car="delorean">DeLorean</button>
+    </div>
     <div class="mp-actions">
       <button id="mpReroll" type="button">다른 지형</button>
       <button id="mpDrive" type="button">이 길로 출발</button>
