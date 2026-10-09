@@ -4164,9 +4164,13 @@ let cinematic = false, cinemaElapsed = 0, cinemaShot = -1, cinemaRestore = null;
 const CINEMA_SHOTS = [
   {name:'산길 추격',mode:0,back:10,side:0,height:3,look:7,fov:56},
   {name:'왼쪽 풍경',mode:0,back:5,side:-9,height:3.5,look:5,fov:58},
+  {name:'로우 앵글 히어로',mode:0,back:6.5,side:-2.5,height:0.55,look:10,fov:48},
   {name:'능선 전경',mode:0,back:18,side:4,height:11,look:15,fov:64},
   {name:'운전석',mode:1,fov:70},
+  {name:'정면 추격',mode:0,back:-11,side:1.5,height:2.2,lookCar:true,fov:54},
   {name:'오른쪽 풍경',mode:0,back:4,side:9,height:3,look:7,fov:58},
+  {name:'사이드 트래킹',mode:0,back:0.5,side:11,height:1.5,look:2,fov:40},
+  {name:'항공 뷰',mode:0,back:34,side:-18,height:26,look:30,fov:48},
   {name:'도로 전경',mode:2,fov:66}
 ];
 function updateCinemaCamera(dt) {
@@ -4184,8 +4188,12 @@ function updateCinemaCamera(dt) {
     const side=shot.side+drift;
     position.set(car.pos.x-fx*shot.back+rx*side,car.y+shot.height,car.pos.z-fz*shot.back+rz*side);
     position.y=Math.max(position.y,groundY(car.s-shot.back,side)+2);
-    const ahead=sampleAt(car.s+shot.look);
-    target.set(ahead.x,ahead.y+0.9,ahead.z);
+    if(shot.lookCar){
+      target.set(car.pos.x,car.y+0.85,car.pos.z);
+    }else{
+      const ahead=sampleAt(car.s+shot.look);
+      target.set(ahead.x,ahead.y+0.9,ahead.z);
+    }
     const blend=switched?1:1-Math.exp(-dt*3);
     camera.position.lerp(position,blend);
     const rotation=new THREE.Matrix4().lookAt(camera.position,target,UP);
