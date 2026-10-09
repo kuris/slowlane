@@ -102,6 +102,18 @@ const riverAmount = s => {
   if (!z || z.type !== 'river') return 0;
   return sstep(z.s0, z.s0 + 18, s) * (1 - sstep(z.s1 - 18, z.s1, s));
 };
+// 중심선(헤딩/높이) 전용 넓은 블렌드. complexMul이 커질수록 산길 곡선의 진폭도 커지는데,
+// 위 지형 블렌드의 좁은 폭(18~50m)으로 그 진폭 차이를 흡수하면 구간 경계에서 도로가 절벽처럼 끊겨 보인다.
+// 구간 길이의 45%(최대 260m)까지 넓혀 같은 높이차를 훨씬 완만한 경사로 풀어낸다.
+const zoneEdgeBlend = (s, wantType) => {
+  const z = zoneAt(s);
+  if (!z || z.type !== wantType) return 0;
+  const w = Math.min(260, (z.s1 - z.s0) * 0.45);
+  return sstep(z.s0, z.s0 + w, s) * (1 - sstep(z.s1 - w, z.s1, s));
+};
+const coastZoneBlendWide = s => zoneEdgeBlend(s, 'coast');
+const cityAmountWide = s => zoneEdgeBlend(s, 'city');
+const riverAmountWide = s => zoneEdgeBlend(s, 'river');
 function terrainKind(s) {
   if (cityAmount(s) > 0.45) return 'city';
   if (riverAmount(s) > 0.45) return 'river';
@@ -446,8 +458,8 @@ const headingAt = s => {
     const opening = 1 - sstep(1200, 1800, s);
     return original * complexMul * (1 - opening) + promenade * opening;
   }
-  const coast = coastZoneBlend(s);
-  const flat = Math.min(1, cityAmount(s) + riverAmount(s));
+  const coast = coastZoneBlendWide(s);
+  const flat = Math.min(1, cityAmountWide(s) + riverAmountWide(s));
   const coastW = coast * (1 - flat);
   const mount = Math.max(0, 1 - coastW - flat);
   return original * complexMul * mount + promenade * coastW + original * flat;
@@ -459,8 +471,8 @@ const roadYAt = s => {
     const opening = 1 - sstep(1200, 1800, s);
     return lerp(original * complexMul, coastalFlat, opening);
   }
-  const coast = coastZoneBlend(s);
-  const flat = Math.min(1, cityAmount(s) + riverAmount(s));
+  const coast = coastZoneBlendWide(s);
+  const flat = Math.min(1, cityAmountWide(s) + riverAmountWide(s));
   const coastW = coast * (1 - flat);
   const mount = Math.max(0, 1 - coastW - flat);
   return original * complexMul * mount + coastalFlat * coastW + original * flat;
