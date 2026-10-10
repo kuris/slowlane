@@ -544,6 +544,9 @@ function groundY(s, lat) {
     const bank = lerp(bedY, h, sstep(8, 70, a));
     h = lerp(h, bank, river);
   }
+  // 시티팩 랜드마크: 디오라마 아래 지면을 평탄화해 기복 지형에 파묻히지 않게 한다
+  const landmark = landmarkAmount(s, lat);
+  if (landmark > 0.001) h = lerp(h, sampleAt(s).y - 0.06, landmark);
   return h;
 }
 // 눈 버텍스 컬러: 순백이 아닌 블루/그레이가 섞인 흰색
@@ -1515,62 +1518,140 @@ function buildCar() {
 buildCar();
 
 /* ---------------- 공개 GLB 차량 (로드 성공 시 프로시저럴 대체, 실패 시 유지) ----------------
-   - 차량: Khronos glTF Sample Assets "ToyCar" (CC0) */
+   - 차량: Khronos glTF Sample Assets "ToyCar" (CC0) / 1985 DeLorean DMC-12 "Time Machine" (Sketchfab, 비상업적 이용) */
 const gltfLoader = new GLTFLoader();
 
-// --- 자동차 GLB ---
-gltfLoader.load('assets/ToyCar.glb', gltf => {
+const CAR_DEFS = {
+  toycar: {
+    label: 'ToyCar',
+    url: 'assets/ToyCar.glb',
+    length: 4.35,
+    flipExtra: Math.PI, // 이 모델은 기본 상태에서 앞면이 +Z를 향해 180도 보정 필요
+    recolor: mn => mn.includes('toycar') || mn.includes('paint') || mn.includes('body'),
+    removeMatch: mn => mn.includes('fabric'), // 전시용 받침 천 제거
+    credit: 'Khronos ToyCar (CC0)',
+  },
+  delorean: {
+    label: 'DeLorean',
+    url: 'assets/1985-delorean-dmc-12-time-machine-bttf/source/1985_delorean_dmc-12_time_machine_bttf.glb',
+    length: 4.27,
+    flipExtra: Math.PI, // 이 모델도 기본 상태에서 앞면이 +Z를 향해 180도 보정 필요
+    recolor: null, // 원본 페인트(스테인리스 차체) 유지
+    removeMatch: null,
+    credit: '1985 DeLorean DMC-12 "Time Machine" (Sketchfab, 비상업적 이용)',
+  },
+};
+let carKey = CAR_DEFS[RUN.get('car')] ? RUN.get('car') : 'toycar';
+let currentCarHolder = null;
+
+function loadCarModel(key) {
+  const def = CAR_DEFS[key] || CAR_DEFS.toycar;
+  const loadToken = ++loadCarModel.token;
+  procBody.visible = true; // 로드되는 동안 프로시저럴 차량을 임시로 보여준다
+  if (currentCarHolder) { bodyGroup.remove(currentCarHolder); currentCarHolder = null; }
+  gltfLoader.load(def.url, gltf => {
+    if (loadToken !== loadCarModel.token) return; // 로드 중 다른 차량으로 전환됨
+    const root = gltf.scene;
+    const cams = [];
+    root.traverse(o => { if (o.isCamera) cams.push(o); });
+    cams.forEach(c => c.parent && c.parent.remove(c)); // 모델에 포함된 카메라 제거
+    if (def.removeMatch) {
+      const drop = [];
+      root.traverse(o => { if (o.isMesh && o.material && def.removeMatch((o.material.name || '').toLowerCase())) drop.push(o); });
+      drop.forEach(o => o.parent && o.parent.remove(o));
+    }
+    root.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(root);
+    const size = box.getSize(new THREE.Vector3());
+    root.scale.setScalar(def.length / Math.max(size.x, size.z)); // 전장을 실제 크기로 정규화
+    const holder = new THREE.Group();
+    holder.add(root);
+    root.rotation.y = (size.x >= size.z ? -Math.PI / 2 : 0) + def.flipExtra; // 전방(-Z) 정렬
+    root.updateMatrixWorld(true);
+    const box2 = new THREE.Box3().setFromObject(holder);
+    holder.position.y -= box2.min.y; // 바퀴가 지면에 닿도록
+    holder.traverse(o => {
+      if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; }
+    });
+    if (def.recolor) {
+      // 도장 재질만 흰색으로 (유리는 원본 유지)
+      root.traverse(o => {
+        if (o.isMesh && o.material) {
+          const mn = (o.material.name || '').toLowerCase();
+          if (def.recolor(mn)) {
+            o.material = o.material.clone();
+            // 원본은 차체·타이어·크롬이 하나의 텍스처를 공유한다.
+            // 텍스처를 보존하고 붉은 도장 부분만 은백색으로 치환한다.
+            o.material.color = new THREE.Color(0xffffff);
+            o.material.onBeforeCompile = shader => {
+              shader.fragmentShader = shader.fragmentShader.replace('#include <map_fragment>', `
+                #include <map_fragment>
+                float paintMask = smoothstep(0.06, 0.20, diffuseColor.r - max(diffuseColor.g, diffuseColor.b));
+                float paintShade = clamp(diffuseColor.r * 1.1, 0.12, 0.88);
+                diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.88, 0.93, 0.98) * paintShade, paintMask);
+              `);
+            };
+            o.material.customProgramCacheKey = () => 'silver-paint-preserve-atlas-v1';
+            o.material.envMapIntensity = 1.3;
+          }
+        }
+      });
+    }
+    glassMeshes.length = 0;
+    root.traverse(o => { if (o.isMesh && o.material && /glass|window/.test((o.material.name || '').toLowerCase())) glassMeshes.push(o); });
+    applyCamMode();
+    bodyGroup.add(holder);
+    fitWindshieldGlass(); // 원본 유리 메시의 앞쪽 면만 차량 로컬 좌표로 보관
+    procBody.visible = false; // GLB 차량으로 교체
+    currentCarHolder = holder;
+    const creditEl = document.getElementById('carCredit');
+    if (creditEl) creditEl.textContent = def.credit;
+    const hbBtn = document.getElementById('tcHandbrake');
+    if (hbBtn) {
+      const fly = key === 'delorean';
+      hbBtn.textContent = fly ? '↑' : 'P';
+      hbBtn.setAttribute('aria-label', fly ? '플라이(공중부양)' : '핸드브레이크');
+    }
+  }, undefined, () => console.warn(def.label + ' GLB 로드 실패 — 프로시저럴 차량 유지'));
+}
+loadCarModel.token = 0;
+loadCarModel(carKey);
+
+/* ---------------- 시티팩 쇼케이스 랜드마크 (고정 위치 정적 디오라마) ----------------
+   - 모델: Sketchfab 시티팩 — 64개 메시가 전부 identity transform으로 구워진 단일 디오라마라
+     개별 건물로 분리할 수 없어 절차적 도시 생성기 대신 도로변에 고정 배치한다. */
+const LANDMARK_S = 2600;        // 시드와 무관하게 항상 같은 위치에 나타나는 고정 거리(m)
+const LANDMARK_LAT = 170;       // 도로 중심선 기준 횡방향 오프셋(m), 오른쪽(+)
+const CITY_PACK_SPAN = 240;     // 목표 가로/세로 폭(m) — 원본 바운딩박스를 여기에 맞춰 스케일
+const CITY_PACK_ROT = 0;        // 수동 요(yaw) 보정 — 내부 스트리트 방향을 알 수 없어 시각적으로 조정
+const landmarkAmount = (s, lat) => {
+  const ds = Math.abs(s - LANDMARK_S), half = CITY_PACK_SPAN * 0.5;
+  return (1 - sstep(half, half + 60, ds)) * (1 - sstep(half + 40, half + 140, Math.abs(Math.abs(lat) - Math.abs(LANDMARK_LAT))));
+};
+gltfLoader.load('assets/city_pack.glb', gltf => {
   const root = gltf.scene;
-  const cams = [];
-  root.traverse(o => { if (o.isCamera) cams.push(o); });
-  cams.forEach(c => c.parent && c.parent.remove(c)); // 모델에 포함된 카메라 제거
-  const fab = [];
-  root.traverse(o => { if (o.isMesh && o.material && (o.material.name || '').toLowerCase().includes('fabric')) fab.push(o); });
-  fab.forEach(o => o.parent && o.parent.remove(o)); // 전시용 받침 천(Fabric) 제거
   root.updateMatrixWorld(true);
-  const box = new THREE.Box3().setFromObject(root);
-  const size = box.getSize(new THREE.Vector3());
-  root.scale.setScalar(4.35 / Math.max(size.x, size.z)); // 전장 4.35m로 정규화
+  const rawSize = new THREE.Box3().setFromObject(root).getSize(new THREE.Vector3());
+  root.scale.setScalar(CITY_PACK_SPAN / Math.max(rawSize.x, rawSize.z));
+  root.updateMatrixWorld(true);
+  // 재센터링은 스케일을 적용한 뒤(= holder 좌표계로) 측정한 박스로 해야 한다.
+  // 원본은 좌표값이 ~10^6 단위라, 스케일 전 중심을 그대로 position에 빼면 자릿수가 어긋난다.
   const holder = new THREE.Group();
   holder.add(root);
-  root.rotation.y = (size.x >= size.z ? -Math.PI / 2 : 0) + Math.PI; // 전방(-Z) 정렬 + 반전 (앞모습 플립 수정)
-  root.updateMatrixWorld(true);
-  const box2 = new THREE.Box3().setFromObject(holder);
-  holder.position.y -= box2.min.y; // 바퀴가 지면에 닿도록
-  holder.traverse(o => {
-    if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; }
-  });
-  // 도장 재질만 흰색으로 (유리는 원본 유지)
-  root.traverse(o => {
-    if (o.isMesh && o.material) {
-      const mn = (o.material.name || '').toLowerCase();
-      if (mn.includes('toycar') || mn.includes('paint') || mn.includes('body')) {
-        o.material = o.material.clone();
-        // 원본은 차체·타이어·크롬이 하나의 텍스처를 공유한다.
-        // 텍스처를 보존하고 붉은 도장 부분만 은백색으로 치환한다.
-        o.material.color = new THREE.Color(0xffffff);
-        o.material.onBeforeCompile = shader => {
-          shader.fragmentShader = shader.fragmentShader.replace('#include <map_fragment>', `
-            #include <map_fragment>
-            float paintMask = smoothstep(0.06, 0.20, diffuseColor.r - max(diffuseColor.g, diffuseColor.b));
-            float paintShade = clamp(diffuseColor.r * 1.1, 0.12, 0.88);
-            diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.88, 0.93, 0.98) * paintShade, paintMask);
-          `);
-        };
-        o.material.customProgramCacheKey = () => 'silver-paint-preserve-atlas-v1';
-        o.material.envMapIntensity = 1.3;
-      }
-    }
-  });
-  glassMeshes.length = 0;
-  root.traverse(o => { if (o.isMesh && o.material && (o.material.name || '').toLowerCase().includes('glass')) glassMeshes.push(o); });
-  applyCamMode();
-  bodyGroup.add(holder);
-  fitWindshieldGlass(); // 원본 유리 메시의 앞쪽 면만 차량 로컬 좌표로 보관
-  procBody.visible = false; // GLB 차량으로 교체
-}, undefined, () => console.warn('자동차 GLB 로드 실패 — 프로시저럴 차량 유지'));
-
-// 단일 GLB 소나무로 전체 식생을 덮어쓰지 않는다. 차량 로더는 기존 그대로 유지한다.
+  holder.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(holder);
+  const center = box.getCenter(new THREE.Vector3());
+  root.position.x -= center.x;
+  root.position.z -= center.z;
+  root.position.y -= box.min.y; // 바닥이 지면에 닿도록
+  holder.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  const r = sampleAt(LANDMARK_S);
+  holder.position.x += r.x + r.rx * LANDMARK_LAT;
+  holder.position.z += r.z + r.rz * LANDMARK_LAT;
+  holder.position.y += groundY(LANDMARK_S, LANDMARK_LAT);
+  holder.rotation.y = r.h + CITY_PACK_ROT;
+  scene.add(holder);
+}, undefined, () => console.warn('시티팩 GLB 로드 실패'));
 
 /* ---------------- 눈 분진 파티클 ---------------- */
 const PMAX = 300;
@@ -1742,9 +1823,10 @@ if (isTouch) {
 /* ---------------- 차량 상태 + 아케이드 물리 ---------------- */
 const car = {
   pos: new THREE.Vector3(), yaw: 0, vx: 0, vz: 0, vF: 0, vR: 0, steer: 0,
-  s: 6, lat: 0, y: 0, dist: 0, slip: 0, offroad: 0, accelSm: 0, yawRateSm: 0
+  s: 6, lat: 0, y: 0, dist: 0, slip: 0, offroad: 0, accelSm: 0, yawRateSm: 0, hover: 0
 };
 const PHYS = { engine: 13.0, brake: 17.0, revAccel: 6.0, revMax: 9.0, dragQ: 0.0006, dragL: 0.035, wheelbase: 2.82, maxSteerBase: 0.60, steerFade: 0.042 };
+const HOVER_MAX = 20, HOVER_RISE = 9, HOVER_FALL_K = 1.4; // 드로리안 "플라이" 모드(스페이스 홀드 시 상승)
 
 function updateVehicle(dt) {
   const c = car, P = PHYS;
@@ -1758,7 +1840,10 @@ function updateVehicle(dt) {
   const engineMul = onRoad ? 1 : onShoulder ? 0.8 : 0.55;
   const rollRes = onRoad ? 0.3 : onShoulder ? 1.6 : 3.8;
   let grip = onRoad ? 7.5 : onShoulder ? 4.6 : 2.3;
-  if (key.space) grip *= 0.3; // 핸드브레이크 = 의도적인 미끄러짐
+  if (key.space && carKey !== 'delorean') grip *= 0.3; // 핸드브레이크 = 의도적인 미끄러짐
+  // 드로리안: 스페이스를 누르는 동안 상승, 떼면 서서히 하강(BTTF 비행 모드)
+  if (carKey === 'delorean' && key.space) c.hover = Math.min(HOVER_MAX, c.hover + HOVER_RISE * dt);
+  else c.hover += (0 - c.hover) * Math.min(1, dt * HOVER_FALL_K);
   grip *= roadGripMul(); // 날씨 노면 영향(비/눈 그립 저하)
 
   // 조향: 속도가 붙을수록 최대 조향각 축소
@@ -1816,11 +1901,13 @@ function updateVehicle(dt) {
     c.lat = dx * Math.cos(p.h) - dz * Math.sin(p.h);
   }
 
-  // 지면 높지(도로 위/눈밭 부드럽게 블렌딩)
+  // 지면 높지(도로 위/눈밭 부드럽게 블렌딩) + 드로리안 플라이 모드 고도
   const rc = sampleAt(c.s);
-  const tY = lerp(rc.y + 0.02, groundY(c.s, c.lat), sstep(3.9, 5.3, a));
+  const tY = lerp(rc.y + 0.02, groundY(c.s, c.lat), sstep(3.9, 5.3, a)) + c.hover;
   c.y += (tY - c.y) * Math.min(1, dt * 10);
 
+  // 나무/가드레일 충돌: 공중에 충분히 떠 있으면(플라이 모드) 지상 장애물을 그냥 넘어간다
+  if (c.hover < 2) {
   // 나무 충돌
   for (const t of activeTrees) {
     const dx = c.pos.x - t.x, dz = c.pos.z - t.z;
@@ -1844,13 +1931,14 @@ function updateVehicle(dt) {
     c.vx *= 0.8; c.vz *= 0.8;
     c.lat = 4.35;
   }
+  }
 
   // R = 도로 복귀
   if (key.r) {
     key.r = false;
     const rr2 = sampleAt(c.s + 4);
     c.pos.set(rr2.x, 0, rr2.z);
-    c.yaw = rr2.h; c.vx = c.vz = 0; c.y = rr2.y + 0.02;
+    c.yaw = rr2.h; c.vx = c.vz = 0; c.y = rr2.y + 0.02; c.hover = 0;
   }
 
   // 메시 반영
@@ -2871,6 +2959,8 @@ function mapQuery({ seed, mix, complex, drive }) {
   else q.set('mix', [mix.mountain, mix.coast, mix.city, mix.river].join(','));
   if (complex === 50) q.delete('complex');
   else q.set('complex', String(complex));
+  if (carKey === 'toycar') q.delete('car');
+  else q.set('car', carKey);
   q.set('season', season);
   q.set('time', String(timeOfDay));
   q.set('weather', weatherName);
@@ -3023,6 +3113,18 @@ function setupMapPicker() {
     history.replaceState(null, '', mapUrl(q));
   };
   showMix(MIX, COMPLEX);
+  const carButtons = [...document.querySelectorAll('#mpCars .mp-car-btn')];
+  const showCar = () => { for (const b of carButtons) b.classList.toggle('active', b.dataset.car === carKey); };
+  showCar();
+  for (const b of carButtons) {
+    b.addEventListener('click', () => {
+      if (b.dataset.car === carKey) return;
+      carKey = b.dataset.car;
+      showCar();
+      loadCarModel(carKey);
+      syncUrl();
+    });
+  }
   drawMapStrip();
   renderer.domElement.style.touchAction = 'none';
   const mapCanvas = document.getElementById('mpMap');

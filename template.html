@@ -52,7 +52,7 @@ setTimeout(function () {
 <div id="vignette"></div>
 <div id="crtOverlay" aria-hidden="true"></div>
 <div id="error"></div>
-<div class="hud" id="title">FROSTLINE<small>겨울 산길 드라이빙 · MVP</small><small class="credit">Car · Khronos ToyCar (CC0) &nbsp;/&nbsp; 식생 · 절차적 가지 지오메트리 · Terrain · Isaac Sukin (MIT)</small><small class="credit">엔진 녹음 · qubodup · CC BY 3.0 · 반복 경계 혼합 및 속도 조절</small></div>
+<div class="hud" id="title">FROSTLINE<small>겨울 산길 드라이빙 · MVP</small><small class="credit">Car · <span id="carCredit">Khronos ToyCar (CC0)</span> &nbsp;/&nbsp; 식생 · 절차적 가지 지오메트리 · Terrain · Isaac Sukin (MIT)</small><small class="credit">엔진 녹음 · qubodup · CC BY 3.0 · 반복 경계 혼합 및 속도 조절</small></div>
 <div class="hud" id="speed"><div class="val" id="speedVal">0</div><div class="unit">KM/H</div></div>
 <div class="hud" id="dist"><span class="lbl">주행 거리</span><span id="distVal">0.00 km</span></div>
 <div class="hud" id="clock">10:30</div>
@@ -112,6 +112,11 @@ setTimeout(function () {
       <label>강 <output id="mpRiverOut">12%</output><input id="mpRiver" type="range" min="0" max="100" step="1" value="12"></label>
     </div>
     <label class="mp-complex">길 복잡도 <output id="mpComplexOut">50</output><input id="mpComplex" type="range" min="0" max="100" step="1" value="50"></label>
+    <div class="mp-car-label">차량</div>
+    <div class="mp-cars" id="mpCars">
+      <button type="button" class="mp-car-btn" data-car="toycar">ToyCar</button>
+      <button type="button" class="mp-car-btn" data-car="delorean">DeLorean</button>
+    </div>
     <div class="mp-actions">
       <button id="mpReroll" type="button">다른 지형</button>
       <button id="mpDrive" type="button">이 길로 출발</button>
