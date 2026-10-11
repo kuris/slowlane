@@ -185,6 +185,11 @@ body.cinematic .hud,body.cinematic #camToast { visibility:hidden; }
 body.cinematic #exitCinema { display:block; }
 body.cinematic:before,body.cinematic:after { content:'';position:fixed;left:0;right:0;height:5vh;background:#080c12;z-index:34;pointer-events:none; }
 body.cinematic:before { top:0; } body.cinematic:after { bottom:0; }
+/* 대시보드 1인칭(칵핏) 전용 레터박스 — 시네마틱 모드가 아닐 때만, 운전 시야를 과하게 가리지 않는 선에서 */
+body.cockpit-view:not(.cinematic):before,body.cockpit-view:not(.cinematic):after { content:'';position:fixed;left:0;right:0;height:7vh;background:#05060a;z-index:8;pointer-events:none; }
+body.cockpit-view:not(.cinematic):before { top:0; } body.cockpit-view:not(.cinematic):after { bottom:0; }
+/* 평면 HUD 텍스트는 3D 계기판·미러와 중복되므로 칵핏 뷰에서는 숨긴다 (시네마틱 모드와 동일한 방식) */
+body.cockpit-view:not(.cinematic) .hud { visibility:hidden; }
 #wpanel { max-height:calc(100vh - 90px);overflow-y:auto; }
 #wpanel #bCoast { width:100%;margin-bottom:10px;padding:10px 8px;border-color:rgba(114,218,205,.55);background:rgba(35,102,103,.65);color:#f5e8cb;letter-spacing:.06em; }
 #wpanel #bCoast:hover { background:rgba(44,128,126,.85); }

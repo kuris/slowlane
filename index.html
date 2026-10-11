@@ -192,6 +192,11 @@ body.cinematic .hud,body.cinematic #camToast { visibility:hidden; }
 body.cinematic #exitCinema { display:block; }
 body.cinematic:before,body.cinematic:after { content:'';position:fixed;left:0;right:0;height:5vh;background:#080c12;z-index:34;pointer-events:none; }
 body.cinematic:before { top:0; } body.cinematic:after { bottom:0; }
+/* 대시보드 1인칭(칵핏) 전용 레터박스 — 시네마틱 모드가 아닐 때만, 운전 시야를 과하게 가리지 않는 선에서 */
+body.cockpit-view:not(.cinematic):before,body.cockpit-view:not(.cinematic):after { content:'';position:fixed;left:0;right:0;height:7vh;background:#05060a;z-index:8;pointer-events:none; }
+body.cockpit-view:not(.cinematic):before { top:0; } body.cockpit-view:not(.cinematic):after { bottom:0; }
+/* 평면 HUD 텍스트는 3D 계기판·미러와 중복되므로 칵핏 뷰에서는 숨긴다 (시네마틱 모드와 동일한 방식) */
+body.cockpit-view:not(.cinematic) .hud { visibility:hidden; }
 #wpanel { max-height:calc(100vh - 90px);overflow-y:auto; }
 #wpanel #bCoast { width:100%;margin-bottom:10px;padding:10px 8px;border-color:rgba(114,218,205,.55);background:rgba(35,102,103,.65);color:#f5e8cb;letter-spacing:.06em; }
 #wpanel #bCoast:hover { background:rgba(44,128,126,.85); }
@@ -3630,8 +3635,55 @@ const camHood = new THREE.Object3D(); camHood.position.set(0, 1.12, -1.5); bodyG
 const dashMat = new THREE.MeshStandardMaterial({ color: 0x23262b, roughness: 0.85, metalness: 0.05 });
 const dash = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.3, 0.42), dashMat);
 dash.position.set(0, 0.82, -0.72); bodyGroup.add(dash);
-const steer = new THREE.Mesh(new THREE.TorusGeometry(0.17, 0.025, 10, 28), new THREE.MeshStandardMaterial({ color: 0x191c20, roughness: 0.7 }));
-steer.position.set(-0.36, 0.71, -0.38); steer.rotation.x = -0.28; bodyGroup.add(steer);
+// 스티어링 휠: 림 + 허브 + 스포크 3개 (기존 단순 토러스보다 입체적인 실내 디테일)
+const steer = new THREE.Group();
+steer.position.set(-0.36, 0.92, -0.44); steer.rotation.x = -0.28; bodyGroup.add(steer);
+const steerMat = new THREE.MeshStandardMaterial({ color: 0x191c20, roughness: 0.7 });
+const steerRim = new THREE.Mesh(new THREE.TorusGeometry(0.17, 0.022, 10, 28), steerMat);
+steer.add(steerRim);
+const steerHub = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.05, 14), steerMat);
+steerHub.rotation.x = Math.PI / 2; steer.add(steerHub);
+for (let i = 0; i < 3; i++) {
+  const spoke = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.022, 0.018), steerMat);
+  spoke.position.set(Math.cos(i * Math.PI * 2 / 3 + Math.PI / 2) * 0.095, Math.sin(i * Math.PI * 2 / 3 + Math.PI / 2) * 0.095, 0);
+  spoke.rotation.z = i * Math.PI * 2 / 3 + Math.PI / 2;
+  steer.add(spoke);
+}
+// 칵핏 소품: 사이드미러(실시간 반사) — GLB/폴백 차량 공통, camMode===1 일 때만 보임
+const cockpitShell = new THREE.Group(); bodyGroup.add(cockpitShell);
+const mirrorHousingMat = new THREE.MeshBasicMaterial({ color: 0x14161a, fog: false });
+// 사이드미러(운전석 반대편, 대시 오른쪽 가장자리에서 보임)
+const sideMirrorHousing = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.1, 0.16), mirrorHousingMat);
+sideMirrorHousing.position.set(0.42, 0.97, -0.705); cockpitShell.add(sideMirrorHousing);
+const mirrorSideAnchor = new THREE.Object3D();
+mirrorSideAnchor.position.set(0.42, 0.965, -0.69); mirrorSideAnchor.rotation.y = Math.PI + 0.5;
+cockpitShell.add(mirrorSideAnchor);
+const mirrorSideRT = new THREE.WebGLRenderTarget(180, 128);
+mirrorSideRT.texture.colorSpace = THREE.SRGBColorSpace;
+const mirrorCamSide = new THREE.PerspectiveCamera(72, 180 / 128, 0.3, 600);
+const mirrorSidePlane = new THREE.Mesh(
+  new THREE.PlaneGeometry(0.13, 0.08),
+  new THREE.MeshBasicMaterial({ map: mirrorSideRT.texture, toneMapped: false, side: THREE.DoubleSide, fog: false })
+);
+mirrorSidePlane.position.set(0.42, 0.965, -0.688); mirrorSidePlane.scale.x = -1;
+cockpitShell.add(mirrorSidePlane);
+cockpitShell.visible = false;
+function renderCockpitMirrors() {
+  mirrorSidePlane.visible = false;
+  carGroup.updateWorldMatrix(true, false);
+  mirrorSideAnchor.getWorldPosition(mirrorCamSide.position);
+  mirrorSideAnchor.getWorldQuaternion(mirrorCamSide.quaternion);
+  renderer.setRenderTarget(mirrorSideRT); renderer.render(scene, mirrorCamSide);
+  renderer.setRenderTarget(null);
+  mirrorSidePlane.visible = true;
+}
+// 칵핏 소품 묶음 — 차량마다 실내 비율이 달라 camDash 기준 상대 배치를 통째로 평행이동한다
+const COCKPIT_RIG = [camDash, dash, steer, sideMirrorHousing, mirrorSideAnchor, mirrorSidePlane]
+  .map(o => ({ o, base: o.position.clone() }));
+function setCockpitAnchor(x, y, z) {
+  const d = new THREE.Vector3(x, y, z).sub(COCKPIT_RIG[0].base);
+  for (const { o, base } of COCKPIT_RIG) o.position.copy(base).add(d);
+}
 // 실시간 계기판 (CanvasTexture — 실차 클러스터 스타일)
 const clCanvas = document.createElement('canvas'); clCanvas.width = 1024; clCanvas.height = 512;
 const clCtx = clCanvas.getContext('2d');
@@ -3639,6 +3691,7 @@ const clTex = new THREE.CanvasTexture(clCanvas); clTex.colorSpace = THREE.SRGBCo
 const cluster = new THREE.Mesh(new THREE.PlaneGeometry(0.56, 0.28), new THREE.MeshBasicMaterial({ map: clTex, toneMapped: false }));
 cluster.position.set(-0.36, 1.01, -0.49); cluster.rotation.x = -0.14; cluster.visible = false;
 bodyGroup.add(cluster);
+COCKPIT_RIG.push({ o: cluster, base: cluster.position.clone() });
 let lastClKey = '';
 function drawGauge(cx, cy, r, val, max, unit, redFrom) {
   const x = clCtx, a0 = Math.PI * 0.75, a1 = Math.PI * 2.25;
@@ -3835,6 +3888,7 @@ const CAR_DEFS = {
     flipExtra: Math.PI, // 이 모델도 기본 상태에서 앞면이 +Z를 향해 180도 보정 필요
     recolor: null, // 원본 페인트(스테인리스 차체) 유지
     removeMatch: null,
+    dashAnchor: [-0.3, 0.92, -0.42], // 낮고 뒤쪽 좌석(플럭스 커패시터) 배치라 기본 좌표보다 낮고 앞쪽
     credit: '1985 DeLorean DMC-12 "Time Machine" (Sketchfab, 비상업적 이용)',
   },
 };
@@ -3901,6 +3955,7 @@ function loadCarModel(key) {
     fitWindshieldGlass(); // 원본 유리 메시의 앞쪽 면만 차량 로컬 좌표로 보관
     procBody.visible = false; // GLB 차량으로 교체
     currentCarHolder = holder;
+    setCockpitAnchor(...(def.dashAnchor || COCKPIT_RIG[0].base.toArray()));
     const creditEl = document.getElementById('carCredit');
     if (creditEl) creditEl.textContent = def.credit;
     const hbBtn = document.getElementById('tcHandbrake');
@@ -4454,7 +4509,12 @@ function demoDrive() {
 let camMode = RUN.get('view') === 'dash' ? 1 : RUN.get('view') === 'hood' ? 2 : 0; // 0=3인칭 추격, 1=대시보드, 2=후드
 const glassMeshes = [];
 const CAM_NAMES = ['3인칭 추격', '대시보드 1인칭', '후드 카메라'];
-function applyCamMode() { const vis = camMode !== 1; glassMeshes.forEach(g => g.visible = vis); cluster.visible = camMode === 1; toast(CAM_NAMES[camMode]); }
+function applyCamMode() {
+  const vis = camMode !== 1; glassMeshes.forEach(g => g.visible = vis);
+  cluster.visible = camMode === 1; cockpitShell.visible = camMode === 1;
+  document.body.classList.toggle('cockpit-view', camMode === 1);
+  toast(CAM_NAMES[camMode]);
+}
 function cycleCam() { if(cinematic)toggleCinema(); camMode = (camMode + 1) % 3; applyCamMode(); snapNext = true; }
 function toast(msg) {
   const el = document.getElementById('camToast'); if (!el) return;
@@ -4725,10 +4785,9 @@ function updateWipers(dt) {
   // 유리와 화면상 겹칠 수 있으므로 유리 윤곽만 클리핑하면 충분하지 않다.
   const occluders = [dash, cluster, steer].filter(mesh=>mesh.visible).map(mesh=>{
     mesh.updateWorldMatrix(true,false);
-    mesh.geometry.computeBoundingBox();
-    const box=mesh.geometry.boundingBox, pts=[];
+    const box=new THREE.Box3().setFromObject(mesh), pts=[]; // steer는 Group이라 geometry.boundingBox 대신 월드 박스를 쓴다
     for (const x of [box.min.x,box.max.x]) for (const y of [box.min.y,box.max.y]) for (const z of [box.min.z,box.max.z]) {
-      const p=new THREE.Vector3(x,y,z).applyMatrix4(mesh.matrixWorld).applyMatrix4(glassInverse);
+      const p=new THREE.Vector3(x,y,z).applyMatrix4(glassInverse);
       const screen=project(p); if(screen)pts.push(screen);
     }
     pts.sort((a,b)=>a.x-b.x || a.y-b.y);
@@ -5207,6 +5266,7 @@ function frame() {
   drawMiniMap();
   updateSound();
   updateWipers(dt);
+  if (camMode === 1 && !mapPreview) renderCockpitMirrors(); // 대시보드 뷰일 때만 룸미러/사이드미러 반사 렌더
   renderer.render(scene, camera);
 }
 
