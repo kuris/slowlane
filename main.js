@@ -1426,7 +1426,7 @@ function drawCluster() {
   const lo = bands[g - 1], hi = bands[g];
   const rpm = kmh > 0.5 ? 1000 + Math.min(1, (kmh - lo) / (hi - lo)) * 4600 : (key.w || key.s ? 1300 : 800);
   const hh = Math.floor(timeOfDay), mm = Math.floor((timeOfDay % 1) * 60);
-  const stamp = kmh + '|' + Math.round(rpm / 50) + '|' + hh + ':' + mm + '|' + Math.round(car.dist);
+  const stamp = kmh + '|' + Math.round(rpm / 50) + '|' + hh + ':' + mm + '|' + Math.round(car.dist) + '|' + car.turbo;
   if (stamp === lastClKey) return;
   lastClKey = stamp;
   const x = clCtx;
@@ -1441,6 +1441,7 @@ function drawCluster() {
   x.font = '500 26px sans-serif'; x.fillStyle = 'rgba(232,238,248,0.7)';
   x.fillText((hh < 10 ? '0' : '') + hh + ':' + (mm < 10 ? '0' : '') + mm, 512, 92);
   x.font = '400 20px sans-serif'; x.fillText('TRIP ' + (car.dist / 1000).toFixed(1) + ' km', 512, 428);
+  if (car.turbo) { x.font = '700 30px sans-serif'; x.fillStyle = '#ff9a3c'; x.fillText('TURBO', 512, 460); }
   clTex.needsUpdate = true;
 }
 scene.add(carGroup);
@@ -1750,8 +1751,8 @@ function updateEffects(dt) {
 }
 
 /* ---------------- 입력 ---------------- */
-const key = { w: false, a: false, s: false, d: false, space: false, r: false };
-const KEYMAP = { KeyW: 'w', ArrowUp: 'w', KeyA: 'a', ArrowLeft: 'a', KeyS: 's', ArrowDown: 's', KeyD: 'd', ArrowRight: 'd', Space: 'space', KeyR: 'r' };
+const key = { w: false, a: false, s: false, d: false, space: false, r: false, shift: false };
+const KEYMAP = { KeyW: 'w', ArrowUp: 'w', KeyA: 'a', ArrowLeft: 'a', KeyS: 's', ArrowDown: 's', KeyD: 'd', ArrowRight: 'd', Space: 'space', KeyR: 'r', ShiftLeft: 'shift', ShiftRight: 'shift' };
 addEventListener('keydown', e => {
   initAudio();
   const k = KEYMAP[e.code];
@@ -1873,10 +1874,11 @@ if (isTouch) {
 /* ---------------- 차량 상태 + 아케이드 물리 ---------------- */
 const car = {
   pos: new THREE.Vector3(), yaw: 0, vx: 0, vz: 0, vF: 0, vR: 0, steer: 0,
-  s: 6, lat: 0, y: 0, dist: 0, slip: 0, offroad: 0, accelSm: 0, yawRateSm: 0, hover: 0
+  s: 6, lat: 0, y: 0, dist: 0, slip: 0, offroad: 0, accelSm: 0, yawRateSm: 0, hover: 0, turbo: false
 };
 const PHYS = { engine: 13.0, brake: 17.0, revAccel: 6.0, revMax: 9.0, dragQ: 0.0006, dragL: 0.035, wheelbase: 2.82, maxSteerBase: 0.60, steerFade: 0.042 };
 const HOVER_MAX = 20, HOVER_RISE = 9, HOVER_FALL_K = 1.4; // 드로리안 "플라이" 모드(스페이스 홀드 시 상승)
+let turboWasOn = false;
 
 function updateVehicle(dt) {
   const c = car, P = PHYS;
@@ -1912,7 +1914,12 @@ function updateVehicle(dt) {
   let vR = c.vx * rx + c.vz * rz;
   const prevVF = vF;
 
-  if (thr) vF += thr * P.engine * engineMul * (1 - clamp(vF / 46, 0, 1)) * dt;
+  // 터보: Shift를 누른 채 가속하면 엔진 출력과 최고 속도 상한이 늘어난다(자율주행 중엔 비활성)
+  c.turbo = key.shift && thr > 0 && !demo && !auto24;
+  if (c.turbo && !turboWasOn) toast('터보!');
+  turboWasOn = c.turbo;
+  const engineBoost = c.turbo ? 1.55 : 1, speedCap = c.turbo ? 64 : 46;
+  if (thr) vF += thr * P.engine * engineBoost * engineMul * (1 - clamp(vF / speedCap, 0, 1)) * dt;
   if (brk) {
     if (vF > 0.4) vF = Math.max(0, vF - brk * P.brake * roadGripMul() * dt); // 연속 제동량 적용
     else if (!(demo || auto24)) vF = Math.max(vF - brk * P.revAccel * dt, -P.revMax); // 정지 후 후진
