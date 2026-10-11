@@ -19,6 +19,8 @@ const bossa = readFileSync(new URL('./assets/sounds/bossa-antigua.mp3', import.m
 js = js.replace("const BOSSA_AUDIO = './assets/sounds/bossa-antigua.mp3';", () => "const BOSSA_AUDIO = 'data:audio/mpeg;base64," + bossa + "';");
 const bttf = readFileSync(new URL('./assets/sounds/bttf.mp3', import.meta.url)).toString('base64');
 js = js.replace("const BTTF_AUDIO = './assets/sounds/bttf.mp3';", () => "const BTTF_AUDIO = 'data:audio/mpeg;base64," + bttf + "';");
+const outatime = readFileSync(new URL('./assets/sounds/outaime.mp3', import.meta.url)).toString('base64');
+js = js.replace("const OUTATIME_AUDIO = './assets/sounds/outaime.mp3';", () => "const OUTATIME_AUDIO = 'data:audio/mpeg;base64," + outatime + "';");
 html = html.replace('//__JS__', () => js);
 writeFileSync(new URL('./index.html', import.meta.url), html);
 console.log('index.html 생성 완료:', html.length, 'bytes');

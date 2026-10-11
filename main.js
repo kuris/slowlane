@@ -2082,7 +2082,11 @@ function updateCamera(dt, snap = false) {
     camera.lookAt(camLook);
   } else {
     const anchor = camMode === 1 ? camDash : camHood;
-    if (camMode === 1 || auto24 || demo) {
+    // 대시보드는 차체에 고정된 시점이라 항상 즉시 추종해야 한다. lerp로 쫓아가면
+    // 속도가 붙을수록(특히 자율주행 중) 카메라가 차량보다 몇 미터씩 뒤처져
+    // 좁은 실내 밖으로 튕겨나가 버린다. 후드 캠은 자율주행 중 급조향에 흔들리지
+    // 않도록 완만히 따라가는 편이 보기 좋아 그 경우만 lerp를 유지한다.
+    if (camMode === 2 && (auto24 || demo)) {
       carGroup.updateWorldMatrix(true, false);
       const targetPos = anchor.position.clone().applyMatrix4(carGroup.matrixWorld);
       const targetQ = carGroup.quaternion.clone();
@@ -2599,12 +2603,14 @@ function noiseBuffer(ctx) {
 const JAZZ_AUDIO = './assets/sounds/backbay-lounge.mp3';
 const BOSSA_AUDIO = './assets/sounds/bossa-antigua.mp3';
 const BTTF_AUDIO = './assets/sounds/bttf.mp3';
+const OUTATIME_AUDIO = './assets/sounds/outaime.mp3';
 // 공식 다운로드: https://incompetech.com/music/royalty-free/mp3-royaltyfree/Bossa%20Antigua.mp3
 // Bossa Antigua — Kevin MacLeod (incompetech.com), CC BY 4.0. 원곡이나 커버가 아닌 별도 곡.
 const MUSIC_TRACKS = {
   jazz: { audio: JAZZ_AUDIO, title: 'Backbay Lounge', credit: 'Kevin MacLeod (incompetech.com)', source: 'https://incompetech.com/music/royalty-free/index.html?isrc=USUAN1700068&Search=Search' },
   bossa: { audio: BOSSA_AUDIO, title: 'Bossa Antigua', credit: 'Kevin MacLeod (incompetech.com)', source: 'https://incompetech.com/music/royalty-free/index.html?isrc=USUAN1700069&Search=Search' },
-  bttf: { audio: BTTF_AUDIO, title: '백 투 더 퓨처 테마', credit: '', source: '' }
+  bttf: { audio: BTTF_AUDIO, title: '백 투 더 퓨처 테마', credit: '', source: '' },
+  outatime: { audio: OUTATIME_AUDIO, title: 'Outatime', credit: '', source: '' }
 };
 let musicTrack = MUSIC_TRACKS[RUN.get('track')] ? RUN.get('track') : 'jazz';
 const jazz = new Audio(MUSIC_TRACKS[musicTrack].audio);
