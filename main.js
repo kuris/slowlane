@@ -2598,11 +2598,13 @@ function noiseBuffer(ctx) {
 }
 const JAZZ_AUDIO = './assets/sounds/backbay-lounge.mp3';
 const BOSSA_AUDIO = './assets/sounds/bossa-antigua.mp3';
+const BTTF_AUDIO = './assets/sounds/bttf.mp3';
 // 공식 다운로드: https://incompetech.com/music/royalty-free/mp3-royaltyfree/Bossa%20Antigua.mp3
 // Bossa Antigua — Kevin MacLeod (incompetech.com), CC BY 4.0. 원곡이나 커버가 아닌 별도 곡.
 const MUSIC_TRACKS = {
-  jazz: { audio: JAZZ_AUDIO, title: 'Backbay Lounge', source: 'https://incompetech.com/music/royalty-free/index.html?isrc=USUAN1700068&Search=Search' },
-  bossa: { audio: BOSSA_AUDIO, title: 'Bossa Antigua', source: 'https://incompetech.com/music/royalty-free/index.html?isrc=USUAN1700069&Search=Search' }
+  jazz: { audio: JAZZ_AUDIO, title: 'Backbay Lounge', credit: 'Kevin MacLeod (incompetech.com)', source: 'https://incompetech.com/music/royalty-free/index.html?isrc=USUAN1700068&Search=Search' },
+  bossa: { audio: BOSSA_AUDIO, title: 'Bossa Antigua', credit: 'Kevin MacLeod (incompetech.com)', source: 'https://incompetech.com/music/royalty-free/index.html?isrc=USUAN1700069&Search=Search' },
+  bttf: { audio: BTTF_AUDIO, title: '백 투 더 퓨처 테마', credit: '', source: '' }
 };
 let musicTrack = MUSIC_TRACKS[RUN.get('track')] ? RUN.get('track') : 'jazz';
 const jazz = new Audio(MUSIC_TRACKS[musicTrack].audio);
@@ -2640,8 +2642,10 @@ function startMusic() {
 }
 function updateMusicCredit() {
   const track = MUSIC_TRACKS[musicTrack], credit = document.getElementById('musicCredit');
-  credit.textContent = track.title + ' — Kevin MacLeod (incompetech.com)';
-  credit.href = track.source;
+  credit.textContent = track.credit ? track.title + ' — ' + track.credit : track.title;
+  credit.href = track.source || '#';
+  const license = document.getElementById('musicLicense');
+  if (license) license.style.display = track.source ? '' : 'none'; // 출처 미상 트랙은 라이선스 배지를 숨긴다
   trackSelect.value = musicTrack;
 }
 function selectMusicTrack(id) {
